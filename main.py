@@ -22,16 +22,15 @@ from collections import defaultdict
 #  CONFIG - CAMBIA TODO ESTO AQUI
 # ============================================================
 
-TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+TOKEN = os.getenv("DISCORD_BOT_TOKEN") or os.getenv("TOKEN")
 PREFIX = ","
 
 # IDs de Owners - Solo ellos pueden usar comandos de Owner
 OWNER_IDS = [
-    1310357536087740450,  # Owner 1 - Cambia esto
-    # 987654321098765432,  # Owner 2 - Quita el # si tienes otro
+    1310357536087740450,
 ]
 
-# IDs de tus roles 1 al 7 - En orden de poder
+# IDs de tus roles 1 al 7 - PON TUS IDS REALES AQUI
 ROLE_1 = 111111111111111111
 ROLE_2 = 222222222222222222
 ROLE_3 = 333333333333333333
@@ -44,14 +43,11 @@ ROLES_1_TO_7 = [ROLE_1, ROLE_2, ROLE_3, ROLE_4, ROLE_5, ROLE_6, ROLE_7]
 ROLES_1_TO_2 = [ROLE_1, ROLE_2]
 ROLES_1_TO_5 = [ROLE_1, ROLE_2, ROLE_3, ROLE_4, ROLE_5]
 
-# Anti-Nuke - SIEMPRE PRENDIDO, no tiene comandos
-# Solo se cambia aqui en main.py
 ANTINUKE_ENABLED = True
-ANTINUKE_LIMIT = 3          # Cuantas acciones antes de banear
-ANTINUKE_TIME = 10           # En cuantos segundos
+ANTINUKE_LIMIT = 3
+ANTINUKE_TIME = 10
 ANTINUKE_BAN_REASON = "Anti-Nuke: Accion masiva detectada"
 
-# Archivos de guardado
 DATA_FILE = "data.json"
 LOG_FILE = "logs.txt"
 
@@ -68,35 +64,21 @@ intents.guilds = True
 bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None, case_insensitive=True)
 
 # ============================================================
-#  DATA - GUARDADO EN JSON PARA QUE NO SE BORRE AL REINICIAR
+#  DATA
 # ============================================================
 
 def load_data():
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return data
+                return json.load(f)
         except:
             pass
-    return {
-        "whitelist": [],
-        "welcome_channel": {},
-        "goodbye_channel": {},
-        "voice_stay": {},
-        "voice_lock": {},
-        "antinuqe_logs": []
-    }
+    return {"whitelist": [], "welcome_channel": {}, "goodbye_channel": {}, "voice_stay": {}, "voice_lock": {}, "antinuqe_logs": []}
 
 def save_data():
     try:
-        data = {
-            "whitelist": list(whitelist),
-            "welcome_channel": welcome_channel,
-            "goodbye_channel": goodbye_channel,
-            "voice_stay": voice_stay,
-            "voice_lock": voice_lock,
-        }
+        data = {"whitelist": list(whitelist), "welcome_channel": welcome_channel, "goodbye_channel": goodbye_channel, "voice_stay": voice_stay, "voice_lock": voice_lock}
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
     except Exception as e:
@@ -110,7 +92,6 @@ def log_to_file(text):
     except:
         pass
 
-# Cargar data al iniciar
 _saved = load_data()
 whitelist = set(_saved.get("whitelist", []))
 welcome_channel = {int(k): v for k, v in _saved.get("welcome_channel", {}).items()}
@@ -118,12 +99,11 @@ goodbye_channel = {int(k): v for k, v in _saved.get("goodbye_channel", {}).items
 voice_stay = {int(k): v for k, v in _saved.get("voice_stay", {}).items()}
 voice_lock = {int(k): v for k, v in _saved.get("voice_lock", {}).items()}
 
-# Anti-Nuke tracking en memoria
 action_log = defaultdict(list)
 antinuke_bans = defaultdict(int)
 
 # ============================================================
-#  HELPERS - EMBEDS OSCUROS CLEAN SIN EMOJIS
+#  HELPERS
 # ============================================================
 
 def embed_base(title, desc=""):
@@ -145,7 +125,12 @@ def no_perm_embed():
 
 def is_owner(ctx_or_user):
     uid = ctx_or_user.author.id if hasattr(ctx_or_user, "author") else ctx_or_user.id
-    return uid in OWNER_IDS
+    if uid in OWNER_IDS:
+        return True
+    guild = getattr(ctx_or_user, "guild", None)
+    if guild and guild.owner_id == uid:
+        return True
+    return False
 
 def has_roles(ctx, roles):
     if is_owner(ctx):
@@ -166,7 +151,6 @@ async def check_owner(ctx):
     return True
 
 def parse_time(tiempo: str):
-    # Acepta: 10s, 10m, 1h, 1d, 10, 10min, etc
     tiempo = tiempo.lower().strip()
     if not tiempo:
         return 600
@@ -189,8 +173,7 @@ def format_time(seconds):
     return f"{seconds // 86400}d"
 
 # ============================================================
-#  ANTI-NUKE - SIEMPRE PRENDIDO, SIN COMANDOS
-#  Solo se cambia en CONFIG arriba
+#  ANTI-NUKE
 # ============================================================
 
 async def antinuke_check(guild, user, action_name):
@@ -200,13 +183,10 @@ async def antinuke_check(guild, user, action_name):
         return False
     if user.id in OWNER_IDS or user.id in whitelist:
         return False
-
     now = datetime.now()
     key = (guild.id, user.id, action_name)
-    # Limpiar logs viejos
     action_log[key] = [t for t in action_log[key] if (now - t).total_seconds() < ANTINUKE_TIME]
     action_log[key].append(now)
-
     if len(action_log[key]) >= ANTINUKE_LIMIT:
         try:
             await guild.ban(user, reason=ANTINUKE_BAN_REASON)
@@ -216,7 +196,6 @@ async def antinuke_check(guild, user, action_name):
         except Exception as e:
             print(f"[ANTI-NUKE] No se pudo banear {user}: {e}")
             log_to_file(f"ANTINUKE ERROR: No se pudo banear {user}: {e}")
-        # Limpiar para no spamear
         action_log[key] = []
         return True
     return False
@@ -224,7 +203,6 @@ async def antinuke_check(guild, user, action_name):
 async def get_audit_user(guild, action):
     try:
         async for entry in guild.audit_logs(limit=1, action=action):
-            # Solo si fue hace menos de 5 segundos
             diff = (datetime.now(entry.created_at.tzinfo) - entry.created_at).total_seconds()
             if diff < 5:
                 return entry.user
@@ -257,12 +235,6 @@ async def on_member_ban(guild, user):
         await antinuke_check(guild, audit_user, "ban")
 
 @bot.event
-async def on_member_remove(member):
-    audit_user = await get_audit_user(member.guild, discord.AuditLogAction.kick)
-    if audit_user:
-        await antinuke_check(member.guild, audit_user, "kick")
-
-@bot.event
 async def on_guild_role_create(role):
     user = await get_audit_user(role.guild, discord.AuditLogAction.role_create)
     if user:
@@ -280,26 +252,17 @@ async def on_guild_role_update(before, after):
     if user:
         await antinuke_check(after.guild, user, "role_update")
 
-@bot.event
-async def on_member_update(before, after):
-    # Detecta si alguien le quita roles a muchos o les da admin
-    if before.roles != after.roles:
-        # No banear por un solo cambio, solo log
-        pass
-
 # ============================================================
-#  1. ROLES - Solo Rol 1 al 7
+#  1. ROLES
 # ============================================================
 
 def find_role(guild, query):
     if not query:
         return None
-    # Por ID
     if query.isdigit():
         r = guild.get_role(int(query))
         if r:
             return r
-    # Por mencion <@&123>
     if query.startswith("<@&") and query.endswith(">"):
         try:
             rid = int(query[3:-1])
@@ -308,15 +271,12 @@ def find_role(guild, query):
                 return r
         except:
             pass
-    # Por nombre exacto
     r = discord.utils.get(guild.roles, name=query)
     if r:
         return r
-    # Por nombre sin mayusculas
     for role in guild.roles:
         if role.name.lower() == query.lower():
             return role
-    # Por nombre parcial
     for role in guild.roles:
         if query.lower() in role.name.lower():
             return role
@@ -337,7 +297,6 @@ def find_member(guild, query):
                 return m
         except:
             pass
-    # Por nombre
     m = discord.utils.get(guild.members, name=query)
     if m:
         return m
@@ -348,9 +307,6 @@ def find_member(guild, query):
 
 @bot.command(name="r")
 async def r_cmd(ctx, action=None, user_arg=None, member: discord.Member = None, *, role_name=None):
-    # ,r add (id) (mencion) name role
-    # ,r remove (id) (mencion) name role
-    # ,r list
     if not await check_roles(ctx, ROLES_1_TO_7):
         return
     try:
@@ -365,26 +321,19 @@ async def r_cmd(ctx, action=None, user_arg=None, member: discord.Member = None, 
             desc = "\n".join(roles_txt) if roles_txt else "Sin roles"
             await ctx.send(embed=embed_base("Roles - Lista", desc))
             return
-
-        # Resolver miembro: puede venir por ID en user_arg o por mencion en member
         target = member
         if target is None and user_arg:
             target = find_member(ctx.guild, user_arg)
         if target is None:
             await ctx.send(embed=usage_embed(",r add (id) (mencion) name role"))
             return
-
-        # Si role_name es None pero user_arg era el rol? Caso: ,r add @user Rol
-        # discord ya parsea member, role_name queda bien
         if not role_name:
             await ctx.send(embed=usage_embed(",r add (id) (mencion) name role"))
             return
-
         role = find_role(ctx.guild, role_name)
         if not role:
             await ctx.send(embed=embed_error(f"Rol no encontrado: `{role_name}`"))
             return
-
         if action == "add":
             if role in target.roles:
                 await ctx.send(embed=embed_error(f"{target.mention} ya tiene `{role.name}`"))
@@ -414,7 +363,7 @@ async def roles_cmd(ctx, member: discord.Member = None):
     await ctx.send(embed=embed_base(f"Roles de {target.display_name}", desc))
 
 # ============================================================
-#  2. WHITELIST - Solo Owners
+#  2. WHITELIST
 # ============================================================
 
 @bot.command(name="wl")
@@ -447,11 +396,9 @@ async def wl_cmd(ctx, action=None, member: discord.Member = None, user_arg=None)
         if action not in ["add", "remove", "quitar", "agregar"]:
             await ctx.send(embed=usage_embed(",wl add (id) (mencion)"))
             return
-
         target = member
         if target is None and user_arg:
             target = find_member(ctx.guild, user_arg)
-        # Si solo pasaron ID y no esta en el server, igual agregarlo por ID
         target_id = None
         if target:
             target_id = target.id
@@ -459,11 +406,9 @@ async def wl_cmd(ctx, action=None, member: discord.Member = None, user_arg=None)
             target_id = int(user_arg)
         elif member:
             target_id = member.id
-
         if target_id is None:
             await ctx.send(embed=usage_embed(",wl add (id) (mencion)"))
             return
-
         if action in ["add", "agregar"]:
             if target_id in whitelist:
                 await ctx.send(embed=embed_error("Ya esta en whitelist"))
@@ -588,7 +533,6 @@ async def nick_cmd(ctx, member: discord.Member = None, *, new_nick=None):
         return
     try:
         await member.edit(nick=new_nick, reason=f"Nick por {ctx.author}")
-        # Estilo como en tu foto: cuadrito chiquito con el nick
         await ctx.send(embed=embed_base("Nickname", f"Now forcing nickname for {member.mention} to `{new_nick}`"))
         log_to_file(f"NICK: {ctx.author} cambio nick de {member} a {new_nick}")
     except Exception as e:
@@ -663,8 +607,7 @@ async def clear_cmd(ctx, cantidad: int = None):
         await ctx.send(embed=embed_error(f"Error: `{e}`"))
 
 # ============================================================
-#  5. BIENVENIDAS / DESPEDIDAS - Solo Owners
-#  ,bnv y ,dpd abren selector de canal
+#  5. BIENVENIDAS / DESPEDIDAS
 # ============================================================
 
 class ChannelSelect(discord.ui.Select):
@@ -672,7 +615,7 @@ class ChannelSelect(discord.ui.Select):
         self.tipo = tipo
         super().__init__(placeholder="Elige un canal", min_values=1, max_values=1)
     async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id not in OWNER_IDS:
+        if interaction.user.id not in OWNER_IDS and interaction.guild.owner_id != interaction.user.id:
             await interaction.response.send_message(embed=no_perm_embed(), ephemeral=True)
             return
         cid = int(self.values[0])
@@ -716,8 +659,17 @@ async def on_member_join(member):
             except:
                 pass
 
+# UN SOLO on_member_remove para que no se borre el anti-nuke ni despedidas
 @bot.event
 async def on_member_remove(member):
+    # Parte Anti-Nuke: checar si fue kick
+    try:
+        audit_user = await get_audit_user(member.guild, discord.AuditLogAction.kick)
+        if audit_user:
+            await antinuke_check(member.guild, audit_user, "kick")
+    except:
+        pass
+    # Parte Despedidas
     cid = goodbye_channel.get(member.guild.id)
     if cid:
         ch = member.guild.get_channel(cid)
@@ -728,10 +680,7 @@ async def on_member_remove(member):
                 pass
 
 # ============================================================
-#  7. VOICE 24/7 - Solo Owners
-#  ,join entra donde estas o te abre selector
-#  ,leave es la unica forma de sacarlo
-#  Reconecta solo en 1 segundo si lo sacan
+#  7. VOICE 24/7 - ARREGLADO
 # ============================================================
 
 class VoiceSelect(discord.ui.Select):
@@ -741,7 +690,7 @@ class VoiceSelect(discord.ui.Select):
             members_count = len(ch.members)
             self.add_option(label=ch.name, value=str(ch.id), description=f"{members_count} conectados")
     async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id not in OWNER_IDS:
+        if interaction.user.id not in OWNER_IDS and interaction.guild.owner_id != interaction.user.id:
             await interaction.response.send_message(embed=no_perm_embed(), ephemeral=True)
             return
         cid = int(self.values[0])
@@ -751,7 +700,7 @@ class VoiceSelect(discord.ui.Select):
             if vc:
                 await vc.move_to(ch)
             else:
-                await ch.connect(reconnect=True, timeout=10)
+                await ch.connect(reconnect=True, timeout=10, self_deaf=True)
             voice_stay[interaction.guild_id] = cid
             voice_lock[interaction.guild_id] = True
             save_data()
@@ -769,20 +718,18 @@ async def join_cmd(ctx):
     if not await check_owner(ctx):
         return
     try:
-        # Caso 1: Si estas en un canal, entra ahi directo
         if ctx.author.voice and ctx.author.voice.channel:
             ch = ctx.author.voice.channel
             vc = ctx.guild.voice_client
             if vc:
                 await vc.move_to(ch)
             else:
-                await ch.connect(reconnect=True, timeout=10)
+                await ch.connect(reconnect=True, timeout=10, self_deaf=True)
             voice_stay[ctx.guild.id] = ch.id
             voice_lock[ctx.guild.id] = True
             save_data()
             await ctx.send(embed=embed_success("Voice", f"Conectado a `{ch.name}` 24/7\nSi me sacan, regreso en 1 segundo"))
         else:
-            # Caso 2: No estas en canal, abre selector con todos los canales
             if not ctx.guild.voice_channels:
                 await ctx.send(embed=embed_error("Este server no tiene canales de voz"))
                 return
@@ -800,56 +747,59 @@ async def leave_cmd(ctx):
     save_data()
     if vc:
         try:
-            await vc.disconnect()
+            await vc.disconnect(force=True)
         except:
             pass
     await ctx.send(embed=embed_success("Voice", "Desconectado. Ya no voy a reconectar hasta que pongas `,join`"))
 
 @bot.event
 async def on_voice_state_update(member, before, after):
-    # Si es el bot y lo sacaron, reconecta en 1 segundo
     if member.id == bot.user.id:
         gid = member.guild.id
         if voice_lock.get(gid) and after.channel is None:
             await asyncio.sleep(1)
-            if voice_lock.get(gid):
-                cid = voice_stay.get(gid)
-                ch = member.guild.get_channel(cid) if cid else None
-                if ch:
+            if not voice_lock.get(gid):
+                return
+            cid = voice_stay.get(gid)
+            ch = member.guild.get_channel(cid) if cid else None
+            if ch:
+                for intento in range(5):
                     try:
-                        # Si ya esta conectado no hacer nada
-                        if member.guild.voice_client is None:
-                            await ch.connect(reconnect=True, timeout=10)
-                            print(f"[VOICE] Reconectado a {ch.name} en {member.guild.name}")
+                        vc = member.guild.voice_client
+                        if vc and vc.is_connected():
+                            return
+                        if vc:
+                            try: await vc.disconnect(force=True)
+                            except: pass
+                        await ch.connect(reconnect=True, timeout=10, self_deaf=True)
+                        print(f"[VOICE] Reconectado a {ch.name} en {member.guild.name}")
+                        return
                     except Exception as e:
-                        print(f"[VOICE] Error reconectando: {e}")
-                        # Reintentar en 2 segundos
+                        print(f"[VOICE] Reintento {intento+1}: {e}")
                         await asyncio.sleep(2)
-                        try:
-                            if member.guild.voice_client is None and voice_lock.get(gid):
-                                await ch.connect(reconnect=True, timeout=10)
-                        except:
-                            pass
 
 @tasks.loop(seconds=10)
 async def voice_keepalive():
-    # Checa cada 10 segundos que el bot siga en voz si debe estar 24/7
     for guild in bot.guilds:
         gid = guild.id
         if voice_lock.get(gid):
             cid = voice_stay.get(gid)
-            if cid and guild.voice_client is None:
+            if cid:
                 ch = guild.get_channel(cid)
                 if ch:
-                    try:
-                        await ch.connect(reconnect=True, timeout=10)
-                        print(f"[VOICE KEEPALIVE] Reconectado a {ch.name}")
-                    except:
-                        pass
+                    vc = guild.voice_client
+                    if not vc or not vc.is_connected():
+                        try:
+                            if vc:
+                                try: await vc.disconnect(force=True)
+                                except: pass
+                            await ch.connect(reconnect=True, timeout=10, self_deaf=True)
+                            print(f"[VOICE KEEPALIVE] Reconectado a {ch.name}")
+                        except:
+                            pass
 
 # ============================================================
-#  8. HELP - ,h / ,help / ,ayuda - Solo Rol 1 al 7
-#  Mismo panel, cada comando en cuadrito chiquito como `quemado`
+#  8. HELP
 # ============================================================
 
 HELP_DESC = """**ROLES**
@@ -901,7 +851,7 @@ async def help_cmd(ctx):
     await ctx.send(embed=e)
 
 # ============================================================
-#  ERRORES GENERALES - Para que nunca se caiga el bot
+#  ERRORES GENERALES
 # ============================================================
 
 @bot.event
@@ -929,19 +879,17 @@ async def on_ready():
     print(f"Voice lock: {voice_lock}")
     print(f"Anti-Nuke: {'PRENDIDO' if ANTINUKE_ENABLED else 'APAGADO'}")
     print(f"========================================")
-    # Iniciar keepalive de voz
     if not voice_keepalive.is_running():
         voice_keepalive.start()
-    # Reconectar voz si estaba 24/7 antes de reiniciar
     for guild in bot.guilds:
         gid = guild.id
         if voice_lock.get(gid):
             cid = voice_stay.get(gid)
             if cid:
                 ch = guild.get_channel(cid)
-                if ch and guild.voice_client is None:
+                if ch and (guild.voice_client is None or not guild.voice_client.is_connected()):
                     try:
-                        await ch.connect(reconnect=True, timeout=10)
+                        await ch.connect(reconnect=True, timeout=10, self_deaf=True)
                         print(f"[VOICE] Reconectado al iniciar en {ch.name}")
                     except Exception as e:
                         print(f"[VOICE] No pude reconectar al iniciar: {e}")
