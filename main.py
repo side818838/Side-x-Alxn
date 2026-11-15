@@ -683,12 +683,13 @@ async def join_cmd(ctx):
         await ctx.send(embed=embed_error("Tienes que estar en un canal de voz para usar `,join`"))
         return
     ch = ctx.author.voice.channel
-    try:
-        bot_member = ctx.guild.get_member(bot.user.id)
-        realmente_en_voz = bot_member.voice and bot_member.voice.channel
 
+    # MENSAJE PRIMERO, PARA QUE NO SE SIENTA QUE TARDA
+    msg = await ctx.send(embed=embed_base("Voice", f"Conectando a `{ch.name}`..."))
+
+    try:
         vc = ctx.guild.voice_client
-        # Si el voice_client esta colgado / desconectado, matarlo
+        # Si esta colgado, matarlo
         if vc and not vc.is_connected():
             try:
                 await vc.disconnect(force=True)
@@ -697,24 +698,25 @@ async def join_cmd(ctx):
             vc = None
             await asyncio.sleep(1)
 
+        bot_member = ctx.guild.get_member(bot.user.id)
+        realmente_en_voz = bot_member.voice and bot_member.voice.channel
+
         if realmente_en_voz and realmente_en_voz.id == ch.id and vc and vc.is_connected():
-            await ctx.send(embed=embed_success("Voice", f"Ya estoy en `{ch.name}`"))
+            await msg.edit(embed=embed_success("Voice", f"Ya estoy en `{ch.name}`"))
             return
 
         if vc and vc.is_connected():
             await vc.move_to(ch)
         else:
-            if vc:
-                try:
-                    await vc.disconnect(force=True)
-                except:
-                    pass
-                await asyncio.sleep(1)
-            await ch.connect()
+            # ESTE ES EL FIX PARA QUE NO SE SALGA: self_deaf=True lo deja fijo
+            await ch.connect(self_deaf=True, self_mute=False)
 
-        await ctx.send(embed=embed_success("Voice", f"Conectado a `{ch.name}`"))
+        await msg.edit(embed=embed_success("Voice", f"Conectado a `{ch.name}`"))
     except Exception as e:
-        await ctx.send(embed=embed_error(f"Error al entrar: `{e}`"))
+        try:
+            await msg.edit(embed=embed_error(f"Error al entrar: `{e}`"))
+        except:
+            await ctx.send(embed=embed_error(f"Error al entrar: `{e}`"))
 
 @bot.command(name="leave")
 async def leave_cmd(ctx):
