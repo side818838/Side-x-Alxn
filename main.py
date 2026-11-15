@@ -76,6 +76,7 @@ action_log = defaultdict(list)
 antinuke_bans = defaultdict(int)
 _ultimo_intento_voz = {}
 _intentos_voz = defaultdict(int)
+_conectando_voz = set()
 
 def embed_base(title, desc=""):
     e = discord.Embed(title=title, description=desc, color=0x111111)
@@ -628,10 +629,15 @@ async def on_member_remove(member):
                 pass
 
 class SilentSource(discord.AudioSource):
+    def __init__(self):
+        self.encoder = discord.opus.Encoder()
     def read(self):
-        return b"\x00" * 3840
+        try:
+            return self.encoder.encode(b"\x00" * 3840, 960)
+        except:
+            return b"\x00" * 2
     def is_opus(self):
-        return False
+        return True
     def cleanup(self):
         pass
 
@@ -647,11 +653,30 @@ def start_247_after(vc):
         asyncio.run_coroutine_threadsafe(reconnect_silencio(vc), bot.loop)
 
 async def reconnect_silencio(vc):
-    await asyncio.sleep(0.2)
+    await asyncio.sleep(0.5)
     if vc and vc.is_connected() and vc.guild.id in voice_stay and not vc.is_playing():
         start_247(vc)
 
-@tasks.loop(seconds=30)
+async def conectar_247(guild, ch):
+    if guild.id in _conectando_voz:
+        return guild.voice_client
+    _conectando_voz.add(guild.id)
+    try:
+        vc = guild.voice_client
+        if vc and vc.is_connected():
+            try:
+                await vc.disconnect(force=True)
+            except:
+                pass
+            await asyncio.sleep(2)
+        vc = await ch.connect(self_deaf=False, self_mute=False, reconnect=True, timeout=20.0)
+        await asyncio.sleep(1)
+        start_247(vc)
+        return vc
+    finally:
+        _conectando_voz.discard(guild.id)
+
+@tasks.loop(seconds=60)
 async def mantener_voz():
     if not voice_stay:
         return
@@ -660,6 +685,8 @@ async def mantener_voz():
         if not ch_id:
             continue
         try:
+            if guild.id in _conectando_voz:
+                continue
             vc = guild.voice_client
             bot_member = guild.get_member(bot.user.id)
             realmente_en_voz = bot_member.voice and bot_member.voice.channel if bot_member else None
@@ -669,24 +696,15 @@ async def mantener_voz():
                     start_247(vc)
                 continue
             ahora = time.time()
-            if ahora - _ultimo_intento_voz.get(guild.id, 0) < 25:
+            if ahora - _ultimo_intento_voz.get(guild.id, 0) < 55:
                 continue
             _ultimo_intento_voz[guild.id] = ahora
-            _intentos_voz[guild.id] += 1
             ch = guild.get_channel(ch_id)
             if not ch:
                 voice_stay.pop(guild.id, None)
                 save_data()
                 continue
-            if vc and not vc.is_connected():
-                try:
-                    await vc.disconnect(force=True)
-                except:
-                    pass
-                await asyncio.sleep(1)
-            vc = await ch.connect(self_deaf=False, self_mute=False, reconnect=True)
-            await asyncio.sleep(1)
-            start_247(vc)
+            await conectar_247(guild, ch)
             _intentos_voz[guild.id] = 0
         except Exception as e:
             print(f"[24/7] No pude reconectar en {guild.name}: {e}")
@@ -698,37 +716,26 @@ async def join_cmd(ctx):
     if not ctx.author.voice or not ctx.author.voice.channel:
         await ctx.send(embed=embed_error("Tienes que estar en un canal de voz para usar `,join`"))
         return
+    if ctx.guild.id in _conectando_voz:
+        await ctx.send(embed=embed_error("Ya me estoy conectando, espera 5 seg y no le des doble"))
+        return
     ch = ctx.author.voice.channel
+    vc_antes = ctx.guild.voice_client
+    bot_member_antes = ctx.guild.get_member(bot.user.id)
+    ya_esta = bot_member_antes.voice and bot_member_antes.voice.channel and bot_member_antes.voice.channel.id == ch.id and vc_antes and vc_antes.is_connected()
+    if ya_esta:
+        if not vc_antes.is_playing():
+            start_247(vc_antes)
+        await ctx.send(embed=embed_success("24/7", f"Ya estoy en `{ch.name}` 24/7, no le des doble porque Discord me saca con 4006"))
+        return
     msg = await ctx.send(embed=embed_base("24/7", f"Conectando a `{ch.name}` en modo 24/7..."))
     try:
         voice_stay[ctx.guild.id] = ch.id
         save_data()
         _intentos_voz[ctx.guild.id] = 0
-        vc = ctx.guild.voice_client
-        if vc and not vc.is_connected():
-            try:
-                await vc.disconnect(force=True)
-            except:
-                pass
-            vc = None
-            await asyncio.sleep(1)
-        bot_member = ctx.guild.get_member(bot.user.id)
-        realmente_en_voz = bot_member.voice and bot_member.voice.channel
-        if realmente_en_voz and realmente_en_voz.id == ch.id and vc and vc.is_connected():
-            start_247(vc)
-            await msg.edit(embed=embed_success("24/7", f"Ya estoy en `{ch.name}` 24/7"))
-            return
-        if vc and vc.is_connected():
-            await vc.move_to(ch)
-            try:
-                await ctx.guild.change_voice_state(channel=ch, self_mute=False, self_deaf=False)
-            except:
-                pass
-        else:
-            vc = await ch.connect(self_deaf=False, self_mute=False, reconnect=True)
-        await asyncio.sleep(1)
-        start_247(vc)
-        await msg.edit(embed=embed_success("24/7", f"Conectado a `{ch.name}` - Modo 24/7 activado"))
+        _ultimo_intento_voz[ctx.guild.id] = time.time()
+        vc = await conectar_247(ctx.guild, ch)
+        await msg.edit(embed=embed_success("24/7", f"Conectado a `{ch.name}` - Modo 24/7 activado - NO le des ,join otra vez"))
     except Exception as e:
         try:
             await msg.edit(embed=embed_error(f"Error al entrar: `{e}`"))
@@ -742,6 +749,7 @@ async def leave_cmd(ctx):
     voice_stay.pop(ctx.guild.id, None)
     save_data()
     _intentos_voz[ctx.guild.id] = 0
+    _conectando_voz.discard(ctx.guild.id)
     vc = ctx.guild.voice_client
     bot_member = ctx.guild.get_member(bot.user.id)
     realmente_en_voz = bot_member.voice and bot_member.voice.channel
