@@ -22,7 +22,7 @@ from collections import defaultdict
 #  CONFIG - CAMBIA TODO ESTO AQUI
 # ============================================================
 
-TOKEN = "TU_TOKEN_AQUI"
+TOKEN = "DISCORD_TOKEN"
 PREFIX = ","
 
 # IDs de Owners - Solo ellos pueden usar comandos de Owner
