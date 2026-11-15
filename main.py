@@ -27,7 +27,7 @@ PREFIX = ","
 
 # IDs de Owners - Solo ellos pueden usar comandos de Owner
 OWNER_IDS = [
-    123456789012345678,  # Owner 1 - Cambia esto
+    1310357536087740450,  # Owner 1 - Cambia esto
     # 987654321098765432,  # Owner 2 - Quita el # si tienes otro
 ]
 
