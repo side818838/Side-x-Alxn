@@ -1,18 +1,118 @@
-import discord
-from discord.ext import commands, tasks
-import asyncio
-import json
+# =============================================================================
+# NITO / NITI - ANTINUKE + MUSIC SATURADA + VC INMUNE - MAIN COMPLETO
+# VERSION NITO ORIGINAL - FFMPEG EN IMPORT - TUPUTAMADRE SATURADO
+# MY_ID: 1310357536087740450
+# =============================================================================
+import sys
+try:
+    import audioop
+except ModuleNotFoundError:
+    try:
+        import audioop_lts as audioop
+        sys.modules['audioop'] = audioop
+        print("[FIX] audioop-lts cargado OK - Python 3.11+")
+    except Exception as e:
+        print(f"[WARN] audioop no encontrado: {e}")
+        pass
+
 import os
+import json
+import discord
+import asyncio
 import time
-import yt_dlp
-from datetime import datetime, timedelta, timezone
-from collections import defaultdict
+import shutil
+import traceback
+import random
+import string
+from discord.ext import commands, tasks
+from datetime import datetime, timezone, timedelta
+from collections import defaultdict, deque
+from dotenv import load_dotenv
+from flask import Flask, request, jsonify
+from threading import Thread
+import logging
 
-TOKEN = os.getenv("DISCORD_BOT_TOKEN") or os.getenv("TOKEN")
-PREFIX = ","
+# --- FLASK PARA QUE RAILWAY / RENDER NO LO APAGUE ---
+app = Flask('')
+@app.route('/')
+def home():
+    return "Bot vivo 24/7 - NITO"
 
-OWNER_IDS = [1310357536087740450]
+def run():
+    app.run(host='0.0.0.0', port=8080)
 
+Thread(target=run).start()
+
+# --- RENDER / RAILWAY FIX FFMPEG - ESTO ES LO QUE TENIA TU NITO ---
+try:
+    import imageio_ffmpeg
+    FFMPEG_EXE = imageio_ffmpeg.get_ffmpeg_exe()
+    print(f"[FFMPEG] {FFMPEG_EXE} - NITO FIX OK")
+except Exception as e:
+    FFMPEG_EXE = "ffmpeg"
+    print(f"[FFMPEG WARN] usando ffmpeg del sistema: {e}")
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+load_dotenv()
+TOKEN = os.getenv("DISCORD_BOT_TOKEN") or os.getenv("TOKEN") or os.getenv("DISCORD_TOKEN")
+MY_ID = 1310357536087740450
+
+print("="*60)
+print(f"[INIT] Iniciando Nito Antinuke - FFMPEG FIX")
+print(f"[INIT] MY_ID: {MY_ID}")
+print(f"[INIT] TOKEN: {'OK - Existe' if TOKEN else 'NO TOKEN - ERROR'}")
+print(f"[INIT] FFMPEG: {FFMPEG_EXE}")
+print(f"[INIT] Python: {sys.version}")
+print("="*60)
+
+app = Flask(__name__)
+
+@app.route('/')
+def home2():
+    return "ANTINUKE ON - BOT NITO LIVE - FFMPEG FIX OK"
+
+@app.route('/health')
+def health():
+    return jsonify({"status": "ok", "bot": "nito", "ffmpeg": FFMPEG_EXE}), 200
+
+@app.route('/ping')
+def ping():
+    return jsonify({"ping": "pong", "uptime": time.time()}), 200
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    print(f"[WEB] Bindeando puerto {port}")
+    try:
+        app.run(host='0.0.0.0', port=port, threaded=True, use_reloader=False, debug=False)
+    except Exception as e:
+        print(f"[WEB ERROR] No se pudo iniciar Flask: {e}")
+        traceback.print_exc()
+
+flask_thread = Thread(target=run_flask, daemon=True, name="FlaskThread")
+flask_thread.start()
+time.sleep(3)
+print("[WEB] Flask OK - Web Service Iniciado")
+
+# --- ARCHIVOS COMO TU NITO ---
+OWNER_FILE = "owners.json"
+WHITELIST_PINGS_FILE = "whitelist_pings.json"
+WHITELIST_ROLES_FILE = "whitelist_roles.json"
+ROLE_IMMUNE_FILE = "role_immune.json"
+VOICE_FILE = "voice.json"
+BOTS_FILE = "bots_whitelist.json"
+VC_IMMUNE_FILE = "vc_inmunes.json"
+BACKUP_DIR = "backups"
+MUSICA_DIR = "musica"
+LOGS_DIR = "logs"
+DATA_FILE = "data.json"
+
+os.makedirs(BACKUP_DIR, exist_ok=True)
+os.makedirs(MUSICA_DIR, exist_ok=True)
+os.makedirs(LOGS_DIR, exist_ok=True)
+
+# --- ROLES 1 AL 7 DEL SIDE-X-ALXN ---
 ROLE_1 = 111111111111111111
 ROLE_2 = 222222222222222222
 ROLE_3 = 333333333333333333
@@ -20,33 +120,61 @@ ROLE_4 = 444444444444444444
 ROLE_5 = 555555555555555555
 ROLE_6 = 666666666666666666
 ROLE_7 = 777777777777777777
-
 ROLES_1_TO_7 = [ROLE_1, ROLE_2, ROLE_3, ROLE_4, ROLE_5, ROLE_6, ROLE_7]
 ROLES_1_TO_2 = [ROLE_1, ROLE_2]
 ROLES_1_TO_5 = [ROLE_1, ROLE_2, ROLE_3, ROLE_4, ROLE_5]
+OWNER_IDS = [1310357536087740450]
 
 ANTINUKE_ENABLED = True
-ANTINUKE_LIMIT = 3
-ANTINUKE_TIME = 10
-ANTINUKE_BAN_REASON = "Anti-Nuke: Accion masiva detectada"
 
-DATA_FILE = "data.json"
-LOG_FILE = "logs.txt"
+USOS = {
+    "r_add": "Uso: ,r_add @usuario nombre_rol\nEj: ,r_add @Juan Admin",
+    "r_remove": "Uso: ,r_remove @usuario nombre_rol",
+    "whitelist_add": "Uso: ,whitelist_add r/p ID",
+    "guardar": "Uso: ,guardar\nPanel para guardar musica - solo main owner",
+    "list": "Uso: ,list\nLista de musica guardada",
+    "join": "Uso: ,join\nEntra a tu VC actual - FIX NITO",
+    "leave": "Uso: ,leave\nSale del VC",
+    "tuputamadre": "Uso: ,tuputamadre [nombre]\nEj: ,tuputamadre intro\nReproduce audio SATURADO",
+    "stop": "Uso: ,stop\nDetiene musica",
+    "play": "Uso: ,play (cancion o link)\nSuena saturada",
+}
 
-# FILTRO SATURADO - COMO TU PRIMER BOT
-# bassboost + volumen alto + compresor = saturada
-FFMPEG_SATURADA = "-af bass=g=18:f=110,volume=2.5,acompressor=threshold=-18dB:ratio=20:attack=1:release=50,alimiter=limit=0.95 -vn -loglevel panic"
-FFMPEG_OPTIONS = {"before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5", "options": FFMPEG_SATURADA}
+def load_guild_map(path):
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            if isinstance(raw, dict):
+                return {str(k): set(map(int, v)) for k, v in raw.items()}
+        except Exception as e:
+            print(f"[LOAD ERROR] {path} {e}")
+            return {}
+    return {}
 
-YTDL_OPTIONS = {"format": "bestaudio/best", "noplaylist": True, "quiet": True, "no_warnings": True, "default_search": "ytsearch", "source_address": "0.0.0.0"}
+def save_guild_map(path, data):
+    try:
+        out = {str(k): list(v) for k, v in data.items()}
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(out, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"[SAVE ERROR] {path} {e}")
 
-intents = discord.Intents.all()
-intents.members = True
-intents.message_content = True
-intents.voice_states = True
-intents.guilds = True
+def load_json_file(path):
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
 
-bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None, case_insensitive=True)
+def save_json_file(path, data):
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"[SAVE JSON ERROR] {path} {e}")
 
 def load_data():
     if os.path.exists(DATA_FILE):
@@ -55,38 +183,47 @@ def load_data():
                 return json.load(f)
         except:
             pass
-    return {"whitelist": [], "welcome_channel": {}, "goodbye_channel": {}, "voice_stay": {}, "voice_lock": {}, "last_song": {}}
+    return {"whitelist": [], "welcome_channel": {}, "goodbye_channel": {}, "voice_stay": {}, "last_song": {}}
 
 def save_data():
     try:
-        data = {"whitelist": list(whitelist), "welcome_channel": welcome_channel, "goodbye_channel": goodbye_channel, "voice_stay": voice_stay, "voice_lock": voice_lock, "last_song": last_song}
+        data = {"whitelist": list(whitelist), "welcome_channel": welcome_channel, "goodbye_channel": goodbye_channel, "voice_stay": voice_stay, "last_song": last_song}
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
     except Exception as e:
         print(f"Error guardando data: {e}")
-
-def log_to_file(text):
-    try:
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(f"[{now}] {text}\n")
-    except:
-        pass
 
 _saved = load_data()
 whitelist = set(_saved.get("whitelist", []))
 welcome_channel = {int(k): v for k, v in _saved.get("welcome_channel", {}).items()}
 goodbye_channel = {int(k): v for k, v in _saved.get("goodbye_channel", {}).items()}
 voice_stay = {int(k): v for k, v in _saved.get("voice_stay", {}).items()}
-voice_lock = {int(k): v for k, v in _saved.get("voice_lock", {}).items()}
 last_song = {int(k): v for k, v in _saved.get("last_song", {}).items()}
 
-action_log = defaultdict(list)
-antinuke_bans = defaultdict(int)
-_ultimo_intento_voz = {}
-_intentos_voz = defaultdict(int)
+OWNER_MAP = load_guild_map(OWNER_FILE)
+WHITELIST_PINGS_MAP = load_guild_map(WHITELIST_PINGS_FILE)
+WHITELIST_ROLES_MAP = load_guild_map(WHITELIST_ROLES_FILE)
+IMMUNE_ROLES_MAP = load_guild_map(ROLE_IMMUNE_FILE)
+BOTS_MAP = load_guild_map(BOTS_FILE)
+VOICE_CHANNELS = load_json_file(VOICE_FILE)
+
+intents = discord.Intents.all()
+intents.message_content = True
+intents.members = True
+intents.guilds = True
+intents.presences = True
+intents.voice_states = True
+
+bot = commands.Bot(command_prefix=",", intents=intents, help_command=None, case_insensitive=True, strip_after_prefix=True)
+
+voice_clients = {}
+guardar_sessions = {}
+pending_audio = set()
+immune_members_cache = {}
 _conectando_voz = set()
-music_queue = defaultdict(list)
+
+def embed_chido(text):
+    return discord.Embed(description=text, color=0x0b0b0b)
 
 def embed_base(title, desc=""):
     e = discord.Embed(title=title, description=desc, color=0x111111)
@@ -104,6 +241,9 @@ def usage_embed(usage):
 
 def no_perm_embed():
     return embed_base("Error", "You're missing permission: manage_roles")
+
+def is_main_owner(uid):
+    return uid == MY_ID
 
 def is_owner(ctx_or_user):
     uid = ctx_or_user.author.id if hasattr(ctx_or_user, "author") else ctx_or_user.id
@@ -154,81 +294,23 @@ def format_time(seconds):
         return f"{seconds // 3600}h"
     return f"{seconds // 86400}d"
 
-async def antinuke_check(guild, user, action_name):
-    if not ANTINUKE_ENABLED:
-        return False
-    if user is None or user.bot:
-        return False
-    if user.id in OWNER_IDS or user.id in whitelist:
-        return False
-    now = datetime.now(timezone.utc)
-    key = (guild.id, user.id, action_name)
-    action_log[key] = [t for t in action_log[key] if (now - t).total_seconds() < ANTINUKE_TIME]
-    action_log[key].append(now)
-    if len(action_log[key]) >= ANTINUKE_LIMIT:
-        try:
-            await guild.ban(user, reason=ANTINUKE_BAN_REASON)
-            antinuke_bans[user.id] += 1
-            log_to_file(f"ANTINUKE: Baneado {user} ({user.id}) en {guild.name} por {action_name} x{len(action_log[key])}")
-            print(f"[ANTI-NUKE] Baneado {user} por {action_name}")
-        except Exception as e:
-            print(f"[ANTI-NUKE] No se pudo banear {user}: {e}")
-            log_to_file(f"ANTINUKE ERROR: No se pudo banear {user}: {e}")
-        action_log[key] = []
-        return True
-    return False
-
-async def get_audit_user(guild, action):
+def extract_id(text):
     try:
-        async for entry in guild.audit_logs(limit=1, action=action):
-            diff = (datetime.now(timezone.utc) - entry.created_at).total_seconds()
-            if diff < 5:
-                return entry.user
-    except Exception as e:
-        print(f"Audit error: {e}")
-    return None
+        nums = ''.join(filter(str.isdigit, str(text)))
+        return int(nums) if nums else None
+    except:
+        return None
 
-@bot.event
-async def on_guild_channel_delete(channel):
-    user = await get_audit_user(channel.guild, discord.AuditLogAction.channel_delete)
-    if user:
-        await antinuke_check(channel.guild, user, "channel_delete")
-
-@bot.event
-async def on_guild_channel_create(channel):
-    user = await get_audit_user(channel.guild, discord.AuditLogAction.channel_create)
-    if user:
-        await antinuke_check(channel.guild, user, "channel_create")
-
-@bot.event
-async def on_guild_channel_update(before, after):
-    user = await get_audit_user(after.guild, discord.AuditLogAction.channel_update)
-    if user:
-        await antinuke_check(after.guild, user, "channel_update")
-
-@bot.event
-async def on_member_ban(guild, user):
-    audit_user = await get_audit_user(guild, discord.AuditLogAction.ban)
-    if audit_user:
-        await antinuke_check(guild, audit_user, "ban")
-
-@bot.event
-async def on_guild_role_create(role):
-    user = await get_audit_user(role.guild, discord.AuditLogAction.role_create)
-    if user:
-        await antinuke_check(role.guild, user, "role_create")
-
-@bot.event
-async def on_guild_role_delete(role):
-    user = await get_audit_user(role.guild, discord.AuditLogAction.role_delete)
-    if user:
-        await antinuke_check(role.guild, user, "role_delete")
-
-@bot.event
-async def on_guild_role_update(before, after):
-    user = await get_audit_user(after.guild, discord.AuditLogAction.role_update)
-    if user:
-        await antinuke_check(after.guild, user, "role_update")
+def find_role_by_name(guild, name):
+    try:
+        name = name.lower().strip()
+        r = discord.utils.find(lambda x: x.name.lower() == name, guild.roles)
+        if r:
+            return r
+        r = discord.utils.find(lambda x: name in x.name.lower(), guild.roles)
+        return r
+    except:
+        return None
 
 def find_role(guild, query):
     if not query:
@@ -245,16 +327,7 @@ def find_role(guild, query):
                 return r
         except:
             pass
-    r = discord.utils.get(guild.roles, name=query)
-    if r:
-        return r
-    for role in guild.roles:
-        if role.name.lower() == query.lower():
-            return role
-    for role in guild.roles:
-        if query.lower() in role.name.lower():
-            return role
-    return None
+    return find_role_by_name(guild, query)
 
 def find_member(guild, query):
     if not query:
@@ -279,6 +352,105 @@ def find_member(guild, query):
             return mem
     return None
 
+# --- ANTINUKE COMO TU NITO ---
+LIMIT = 3
+TIME_WINDOW = 10
+cache = defaultdict(list)
+recent_actions = deque(maxlen=100)
+
+def is_spam(uid):
+    now = time.time()
+    try:
+        cache[uid] = [t for t in cache[uid] if now - t < TIME_WINDOW]
+        cache[uid].append(now)
+        return len(cache[uid]) > LIMIT
+    except:
+        return False
+
+def get_guild_set(map_data, guild_id):
+    try:
+        return map_data.get(str(guild_id), set())
+    except:
+        return set()
+
+def is_safe(guild, uid):
+    if uid == MY_ID:
+        return True
+    if not guild:
+        return uid == MY_ID
+    try:
+        if uid in get_guild_set(OWNER_MAP, guild.id):
+            return True
+        if uid == guild.owner_id:
+            return True
+    except:
+        pass
+    return False
+
+def has_immune_role(guild, uid):
+    try:
+        m = guild.get_member(uid)
+        if m:
+            immune_ids = get_guild_set(IMMUNE_ROLES_MAP, guild.id)
+            if any(r.id in immune_ids for r in m.roles):
+                return True
+        return uid in immune_members_cache.get(str(guild.id), set())
+    except:
+        return False
+
+async def auto_backup(guild):
+    try:
+        path = f"{BACKUP_DIR}/{guild.id}.json"
+        data = {"guild_name": guild.name, "guild_id": guild.id, "backup_time": datetime.now(timezone.utc).isoformat(), "roles": [], "categories": [], "channels": [], "member_count": guild.member_count}
+        for r in reversed(guild.roles):
+            if r.is_default() or r.managed or r.is_bot_managed():
+                continue
+            data["roles"].append({"name": r.name, "id": r.id, "color": r.color.value, "permissions": r.permissions.value, "hoist": r.hoist, "mentionable": r.mentionable, "position": r.position})
+        for cat in guild.categories:
+            data["categories"].append({"name": cat.name, "id": cat.id, "position": cat.position})
+        for ch in guild.channels:
+            if isinstance(ch, discord.CategoryChannel):
+                continue
+            data["channels"].append({"name": ch.name, "id": ch.id, "type": str(ch.type), "category": ch.category.name if ch.category else None, "position": ch.position})
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+        print(f"[BACKUP] Auto backup {guild.id} - {guild.name}")
+        return path
+    except Exception as e:
+        print(f"[BACKUP ERROR] {e}")
+        return None
+
+async def nuke_punish(guild, uid, reason):
+    print(f"[NUKE] Punish {uid} en {guild.id} por {reason}")
+    if is_safe(guild, uid):
+        return
+    if has_immune_role(guild, uid):
+        return
+    try:
+        path = await auto_backup(guild)
+    except:
+        path = None
+    try:
+        owners_del_server = get_guild_set(OWNER_MAP, guild.id)
+        for owner_id in owners_del_server:
+            try:
+                u = await bot.fetch_user(owner_id)
+                if path and os.path.exists(path):
+                    await u.send(f"🚨 ANTINUKE {guild.name} {reason} by ( {uid} )", file=discord.File(path))
+                else:
+                    await u.send(f"🚨 ANTINUKE {guild.name} {reason} by ( {uid} )")
+            except:
+                pass
+    except:
+        pass
+    try:
+        m = guild.get_member(uid) or await guild.fetch_member(uid)
+        await guild.ban(m, reason=f"ANTINUKE {reason}")
+        print(f"[NUKE] Baneado {uid} por {reason}")
+    except Exception as e:
+        print(f"[NUKE BAN ERROR] {e}")
+
+# --- LO DE ROLES / WL / MOD DEL SIDE-X-ALXN ---
 @bot.command(name="r")
 async def r_cmd(ctx, action=None, user_arg=None, member: discord.Member = None, *, role_name=None):
     if not await check_roles(ctx, ROLES_1_TO_7):
@@ -309,21 +481,13 @@ async def r_cmd(ctx, action=None, user_arg=None, member: discord.Member = None, 
             await ctx.send(embed=embed_error(f"Rol no encontrado: `{role_name}`"))
             return
         if action == "add":
-            if role in target.roles:
-                await ctx.send(embed=embed_error(f"{target.mention} ya tiene `{role.name}`"))
-                return
             await target.add_roles(role, reason=f"Role add por {ctx.author}")
             await ctx.send(embed=embed_success("Role Added", f"`{role.name}` para {target.mention}\nPuesto por: {ctx.author.mention}"))
-            log_to_file(f"ROLE ADD: {ctx.author} dio {role.name} a {target} en {ctx.guild.name}")
         else:
-            if role not in target.roles:
-                await ctx.send(embed=embed_error(f"{target.mention} no tiene `{role.name}`"))
-                return
             await target.remove_roles(role, reason=f"Role remove por {ctx.author}")
-            await ctx.send(embed=embed_success("Role Removed", f"`{role.name}` quitado de {target.mention}\nQuitado por: {ctx.author.mention}"))
-            log_to_file(f"ROLE REMOVE: {ctx.author} quito {role.name} a {target}")
+            await ctx.send(embed=embed_success("Role Removed", f"`{role.name}` quitado de {target.mention}"))
     except discord.Forbidden:
-        await ctx.send(embed=embed_error("No tengo permisos para manejar ese rol. Pon mi rol mas arriba."))
+        await ctx.send(embed=embed_error("No tengo permisos. Pon mi rol mas arriba."))
     except Exception as e:
         await ctx.send(embed=embed_error(f"Error: `{e}`"))
 
@@ -340,65 +504,40 @@ async def roles_cmd(ctx, member: discord.Member = None):
 async def wl_cmd(ctx, action=None, member: discord.Member = None, user_arg=None):
     if not await check_owner(ctx):
         return
-    try:
-        if action is None:
-            await ctx.send(embed=usage_embed(",wl add (id) (mencion)"))
+    if action is None:
+        await ctx.send(embed=usage_embed(",wl add (id) (mencion)"))
+        return
+    action = action.lower()
+    if action == "list":
+        if not whitelist:
+            await ctx.send(embed=embed_base("Whitelist", "Vacia"))
             return
-        action = action.lower()
-        if action == "list":
-            if not whitelist:
-                await ctx.send(embed=embed_base("Whitelist", "Vacia"))
-                return
-            lst = []
-            for uid in whitelist:
-                m = ctx.guild.get_member(uid)
-                if m:
-                    lst.append(f"{m.mention} - `{uid}`")
-                else:
-                    lst.append(f"ID: `{uid}`")
-            await ctx.send(embed=embed_base("Whitelist", "\n".join(lst)))
-            return
-        if action == "clear":
-            whitelist.clear()
-            save_data()
-            await ctx.send(embed=embed_success("Whitelist", "Limpiada por completo"))
-            return
-        if action not in ["add", "remove", "quitar", "agregar"]:
-            await ctx.send(embed=usage_embed(",wl add (id) (mencion)"))
-            return
-        target = member
-        if target is None and user_arg:
-            target = find_member(ctx.guild, user_arg)
-        target_id = None
-        if target:
-            target_id = target.id
-        elif user_arg and user_arg.isdigit():
-            target_id = int(user_arg)
-        elif member:
-            target_id = member.id
-        if target_id is None:
-            await ctx.send(embed=usage_embed(",wl add (id) (mencion)"))
-            return
-        if action in ["add", "agregar"]:
-            if target_id in whitelist:
-                await ctx.send(embed=embed_error("Ya esta en whitelist"))
-                return
-            whitelist.add(target_id)
-            save_data()
-            display = target.mention if target else f"`{target_id}`"
-            await ctx.send(embed=embed_success("Whitelist", f"{display} agregado a whitelist\nPor: {ctx.author.mention}"))
-            log_to_file(f"WL ADD: {ctx.author} agrego {target_id}")
-        else:
-            if target_id not in whitelist:
-                await ctx.send(embed=embed_error("No esta en whitelist"))
-                return
-            whitelist.discard(target_id)
-            save_data()
-            display = target.mention if target else f"`{target_id}`"
-            await ctx.send(embed=embed_success("Whitelist", f"{display} quitado de whitelist"))
-            log_to_file(f"WL REMOVE: {ctx.author} quito {target_id}")
-    except Exception as e:
-        await ctx.send(embed=embed_error(f"Error: `{e}`"))
+        lst = []
+        for uid in whitelist:
+            m = ctx.guild.get_member(uid)
+            lst.append(f"{m.mention} - `{uid}`" if m else f"ID: `{uid}`")
+        await ctx.send(embed=embed_base("Whitelist", "\n".join(lst)))
+        return
+    if action == "clear":
+        whitelist.clear()
+        save_data()
+        await ctx.send(embed=embed_success("Whitelist", "Limpiada"))
+        return
+    target = member
+    if target is None and user_arg:
+        target = find_member(ctx.guild, user_arg)
+    target_id = target.id if target else int(user_arg) if user_arg and user_arg.isdigit() else None
+    if target_id is None:
+        await ctx.send(embed=usage_embed(",wl add (id) (mencion)"))
+        return
+    if action == "add":
+        whitelist.add(target_id)
+        save_data()
+        await ctx.send(embed=embed_success("Whitelist", f"{target.mention if target else target_id} agregado"))
+    else:
+        whitelist.discard(target_id)
+        save_data()
+        await ctx.send(embed=embed_success("Whitelist", f"{target.mention if target else target_id} quitado"))
 
 @bot.command(name="massban")
 async def massban_cmd(ctx, *members: discord.Member):
@@ -418,8 +557,7 @@ async def massban_cmd(ctx, *members: discord.Member):
             count += 1
         except:
             fails += 1
-    await ctx.send(embed=embed_success("Massban", f"Baneados: `{count}`\nFallidos: `{fails}`\nPor: {ctx.author.mention}"))
-    log_to_file(f"MASSBAN: {ctx.author} baneo {count} en {ctx.guild.name}")
+    await ctx.send(embed=embed_success("Massban", f"Baneados: `{count}`\nFallidos: `{fails}`"))
 
 @bot.command(name="unban")
 async def unban_cmd(ctx, user_id: int = None):
@@ -431,31 +569,9 @@ async def unban_cmd(ctx, user_id: int = None):
     try:
         user = await bot.fetch_user(user_id)
         await ctx.guild.unban(user, reason=f"Unban por {ctx.author}")
-        await ctx.send(embed=embed_success("Unban", f"Desbaneado: `{user.name}` - `{user.id}`"))
-    except discord.NotFound:
-        await ctx.send(embed=embed_error("Ese ID no esta baneado o no existe"))
+        await ctx.send(embed=embed_success("Unban", f"Desbaneado: `{user.name}`"))
     except Exception as e:
-        await ctx.send(embed=embed_error(f"No se pudo desbanear: `{e}`"))
-
-@bot.command(name="unbanmass")
-async def unbanmass_cmd(ctx, *, ids_text=None):
-    if not await check_owner(ctx):
-        return
-    if not ids_text:
-        await ctx.send(embed=usage_embed(",unbanmass + lista de IDs abajo"))
-        await ctx.send(embed=embed_base("Ejemplo", "`,unbanmass\n123456789\n987654321\n555555555`"))
-        return
-    count = 0
-    fails = 0
-    for part in ids_text.replace(",", " ").replace("\n", " ").split():
-        try:
-            uid = int(part)
-            user = await bot.fetch_user(uid)
-            await ctx.guild.unban(user, reason=f"Unbanmass por {ctx.author}")
-            count += 1
-        except:
-            fails += 1
-    await ctx.send(embed=embed_success("Unbanmass", f"Desbaneados: `{count}`\nFallidos: `{fails}`"))
+        await ctx.send(embed=embed_error(f"No se pudo: `{e}`"))
 
 @bot.command(name="ban")
 async def ban_cmd(ctx, member: discord.Member = None, *, reason="Sin razon"):
@@ -464,13 +580,9 @@ async def ban_cmd(ctx, member: discord.Member = None, *, reason="Sin razon"):
     if not member:
         await ctx.send(embed=usage_embed(",ban (mencion) (razon)"))
         return
-    if member.id in OWNER_IDS:
-        await ctx.send(embed=embed_error("No puedes banear a un Owner"))
-        return
     try:
         await member.ban(reason=reason)
-        await ctx.send(embed=embed_success("Ban", f"{member.mention} baneado\nRazon: `{reason}`\nPor: {ctx.author.mention}"))
-        log_to_file(f"BAN: {ctx.author} baneo {member} razon: {reason}")
+        await ctx.send(embed=embed_success("Ban", f"{member.mention} baneado\nRazon: `{reason}`"))
     except Exception as e:
         await ctx.send(embed=embed_error(f"Error: `{e}`"))
 
@@ -481,12 +593,9 @@ async def kick_cmd(ctx, member: discord.Member = None, *, reason="Sin razon"):
     if not member:
         await ctx.send(embed=usage_embed(",kick (mencion) (razon)"))
         return
-    if member.id in OWNER_IDS:
-        await ctx.send(embed=embed_error("No puedes kickear a un Owner"))
-        return
     try:
         await member.kick(reason=reason)
-        await ctx.send(embed=embed_success("Kick", f"{member.mention} expulsado\nRazon: `{reason}`\nPor: {ctx.author.mention}"))
+        await ctx.send(embed=embed_success("Kick", f"{member.mention} expulsado"))
     except Exception as e:
         await ctx.send(embed=embed_error(f"Error: `{e}`"))
 
@@ -500,7 +609,6 @@ async def nick_cmd(ctx, member: discord.Member = None, *, new_nick=None):
     try:
         await member.edit(nick=new_nick, reason=f"Nick por {ctx.author}")
         await ctx.send(embed=embed_base("Nickname", f"Now forcing nickname for {member.mention} to `{new_nick}`"))
-        log_to_file(f"NICK: {ctx.author} cambio nick de {member} a {new_nick}")
     except Exception as e:
         await ctx.send(embed=embed_error(f"Error: `{e}`"))
 
@@ -514,7 +622,7 @@ async def timeout_cmd(ctx, member: discord.Member = None, tiempo="10m", *, reaso
     seconds = parse_time(tiempo)
     try:
         await member.timeout(timedelta(seconds=seconds), reason=reason)
-        await ctx.send(embed=embed_success("Timeout", f"{member.mention} muteado por `{format_time(seconds)}`\nRazon: `{reason}`"))
+        await ctx.send(embed=embed_success("Timeout", f"{member.mention} muteado por `{format_time(seconds)}`"))
     except Exception as e:
         await ctx.send(embed=embed_error(f"Error: `{e}`"))
 
@@ -558,9 +666,6 @@ async def clear_cmd(ctx, cantidad: int = None):
     if not cantidad:
         await ctx.send(embed=usage_embed(",clear (cantidad)"))
         return
-    if cantidad > 500:
-        await ctx.send(embed=embed_error("Maximo 500 mensajes"))
-        return
     try:
         deleted = await ctx.channel.purge(limit=cantidad + 1)
         msg = await ctx.send(embed=embed_success("Clear", f"Borrados `{len(deleted)-1}` mensajes"))
@@ -572,6 +677,7 @@ async def clear_cmd(ctx, cantidad: int = None):
     except Exception as e:
         await ctx.send(embed=embed_error(f"Error: `{e}`"))
 
+# --- BIENVENIDAS / DESPEDIDAS ---
 class ChannelSelect(discord.ui.Select):
     def __init__(self, tipo):
         self.tipo = tipo
@@ -584,11 +690,11 @@ class ChannelSelect(discord.ui.Select):
         if self.tipo == "bnv":
             welcome_channel[interaction.guild_id] = cid
             save_data()
-            await interaction.response.send_message(embed=embed_success("Bienvenidas", f"Canal puesto: <#{cid}>\nGuardado para siempre"), ephemeral=True)
+            await interaction.response.send_message(embed=embed_success("Bienvenidas", f"Canal puesto: <#{cid}>"), ephemeral=True)
         else:
             goodbye_channel[interaction.guild_id] = cid
             save_data()
-            await interaction.response.send_message(embed=embed_success("Despedidas", f"Canal puesto: <#{cid}>\nGuardado para siempre"), ephemeral=True)
+            await interaction.response.send_message(embed=embed_success("Despedidas", f"Canal puesto: <#{cid}>"), ephemeral=True)
 
 class ChannelView(discord.ui.View):
     def __init__(self, guild, tipo):
@@ -623,235 +729,410 @@ async def on_member_join(member):
 
 @bot.event
 async def on_member_remove(member):
-    try:
-        audit_user = await get_audit_user(member.guild, discord.AuditLogAction.kick)
-        if audit_user:
-            await antinuke_check(member.guild, audit_user, "kick")
-    except:
-        pass
     cid = goodbye_channel.get(member.guild.id)
     if cid:
         ch = member.guild.get_channel(cid)
         if ch:
             try:
-                await ch.send(embed=embed_base("Despedida", f"Se fue {member.mention} de **{member.guild.name}**\nEramos `{member.guild.member_count + 1}` y ahora somos `{member.guild.member_count}`"))
+                await ch.send(embed=embed_base("Despedida", f"Se fue {member.mention} de **{member.guild.name}**"))
             except:
                 pass
 
-def get_ytdl_url(query):
-    with yt_dlp.YoutubeDL(YTDL_OPTIONS) as ydl:
-        info = ydl.extract_info(query, download=False)
-        if "entries" in info:
-            info = info["entries"][0]
-        return info["url"], info.get("title", "Sin titulo")
-
-def play_next(ctx_or_guild):
-    guild = ctx_or_guild.guild if hasattr(ctx_or_guild, "guild") else ctx_or_guild
-    vc = guild.voice_client
-    if not vc or not vc.is_connected():
-        return
-    if vc.is_playing():
-        return
-    if not music_queue[guild.id]:
-        # Si se acabo la cola, vuelve a poner la ultima cancion en loop = 24/7
-        if guild.id in last_song:
-            music_queue[guild.id].append(last_song[guild.id])
-        else:
-            # Si nunca puso cancion, pone silencio con ffmpeg para no salirse
-            try:
-                source = discord.FFmpegPCMAudio("anullsrc=r=48000:cl=stereo", before_options="-f lavfi -i anullsrc=r=48000:cl=stereo -t 0 -reconnect 1", options="-vn -loglevel panic")
-                vc.play(source, after=lambda e: play_next_after(guild))
-            except:
-                pass
-            return
-    song = music_queue[guild.id].pop(0)
+# =============================================================================
+# MUSICA NITO - TUPUTAMADRE SATURADO + GUARDAR + FFMPEG - ESTO ES LO TUYO
+# =============================================================================
+def play_silencio_nito(vc):
+    # Esto es lo que tenia tu Nito - silencio con ffmpeg en loop para que no lo saque Discord
     try:
-        url, title = get_ytdl_url(song)
-        source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
-        last_song[guild.id] = song
-        save_data()
-        vc.play(source, after=lambda e: play_next_after(guild))
-        print(f"[MUSICA] Sonando saturada: {title}")
+        if vc.is_playing():
+            vc.stop()
+        src = discord.FFmpegPCMAudio("anullsrc=r=48000:cl=stereo", executable=FFMPEG_EXE, before_options="-f lavfi -re", options="-vn")
+        def after_play(err):
+            if vc.is_connected():
+                try:
+                    vc.play(discord.FFmpegPCMAudio("anullsrc=r=48000:cl=stereo", executable=FFMPEG_EXE, before_options="-f lavfi -re", options="-vn"), after=after_play)
+                except:
+                    pass
+        vc.play(src, after=after_play)
     except Exception as e:
-        print(f"[MUSICA] Error: {e}")
-        play_next(guild)
+        print(f"[NITO SILENCIO ERROR] {e}")
 
-def play_next_after(guild):
-    if guild.id in voice_stay:
-        asyncio.run_coroutine_threadsafe(play_next_async(guild), bot.loop)
-
-async def play_next_async(guild):
-    await asyncio.sleep(0.5)
-    play_next(guild)
-
-async def conectar_247(guild, ch):
-    if guild.id in _conectando_voz:
-        return guild.voice_client
-    _conectando_voz.add(guild.id)
-    try:
-        vc = guild.voice_client
-        if vc and vc.is_connected():
+@tasks.loop(seconds=15)
+async def keep_voice_alive():
+    # Loop del Nito - cada 15s revisa si esta en voz y si no esta sonando, le mete silencio
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        for gid in list(VOICE_CHANNELS.keys()):
             try:
-                await vc.disconnect(force=True)
+                guild = bot.get_guild(int(gid))
+                if not guild:
+                    continue
+                vc = guild.voice_client
+                if vc and vc.is_connected() and not vc.is_playing():
+                    play_silencio_nito(vc)
             except:
                 pass
-            await asyncio.sleep(2)
-        vc = await ch.connect(self_deaf=False, self_mute=False, reconnect=True, timeout=20.0)
-        await asyncio.sleep(1)
-        # Al entrar, si ya habia cancion, la vuelve a poner saturada
-        if guild.id in last_song:
-            music_queue[guild.id].insert(0, last_song[guild.id])
-        play_next(guild)
-        return vc
-    finally:
-        _conectando_voz.discard(guild.id)
+        await asyncio.sleep(5)
 
-@tasks.loop(seconds=60)
-async def mantener_voz():
-    if not voice_stay:
+@bot.event
+async def on_voice_state_update(member, before, after):
+    # Si lo sacan de voz y estaba en 24/7, vuelve solo - como tu Nito
+    if member.id != bot.user.id:
         return
-    for guild in bot.guilds:
-        ch_id = voice_stay.get(guild.id)
-        if not ch_id:
-            continue
-        try:
-            if guild.id in _conectando_voz:
-                continue
-            vc = guild.voice_client
-            bot_member = guild.get_member(bot.user.id)
-            realmente_en_voz = bot_member.voice and bot_member.voice.channel if bot_member else None
-            if vc and vc.is_connected() and realmente_en_voz and realmente_en_voz.id == ch_id:
-                _intentos_voz[guild.id] = 0
-                if not vc.is_playing():
-                    play_next(guild)
-                continue
-            ahora = time.time()
-            if ahora - _ultimo_intento_voz.get(guild.id, 0) < 55:
-                continue
-            _ultimo_intento_voz[guild.id] = ahora
-            ch = guild.get_channel(ch_id)
-            if not ch:
-                voice_stay.pop(guild.id, None)
-                save_data()
-                continue
-            await conectar_247(guild, ch)
-            _intentos_voz[guild.id] = 0
-        except Exception as e:
-            print(f"[24/7] No pude reconectar en {guild.name}: {e}")
+    if before.channel and after.channel is None:
+        gid = str(before.channel.guild.id)
+        if gid in VOICE_CHANNELS or before.channel.guild.id in voice_stay:
+            await asyncio.sleep(3)
+            try:
+                vc = await before.channel.connect(self_deaf=False, reconnect=True)
+                play_silencio_nito(vc)
+            except:
+                pass
 
 @bot.command(name="join")
 async def join_cmd(ctx):
     if not await check_owner(ctx):
         return
-    if not ctx.author.voice or not ctx.author.voice.channel:
-        await ctx.send(embed=embed_error("Tienes que estar en un canal de voz para usar `,join`"))
-        return
-    if ctx.guild.id in _conectando_voz:
-        await ctx.send(embed=embed_error("Ya me estoy conectando, espera 5 seg y no le des doble"))
-        return
-    ch = ctx.author.voice.channel
-    vc_antes = ctx.guild.voice_client
-    bot_member_antes = ctx.guild.get_member(bot.user.id)
-    ya_esta = bot_member_antes.voice and bot_member_antes.voice.channel and bot_member_antes.voice.channel.id == ch.id and vc_antes and vc_antes.is_connected()
-    if ya_esta:
-        if not vc_antes.is_playing():
-            play_next(ctx)
-        await ctx.send(embed=embed_success("24/7", f"Ya estoy en `{ch.name}` 24/7"))
-        return
-    msg = await ctx.send(embed=embed_base("24/7", f"Conectando a `{ch.name}` en modo 24/7 saturado..."))
     try:
-        voice_stay[ctx.guild.id] = ch.id
+        if not ctx.author.voice or not ctx.author.voice.channel:
+            await ctx.send("Conéctate a un canal de voz primero we")
+            return
+        channel = ctx.author.voice.channel
+        vc = ctx.guild.voice_client
+        if vc and vc.is_connected():
+            await vc.move_to(channel)
+        else:
+            vc = await channel.connect(self_deaf=False, self_mute=False, reconnect=True)
+        VOICE_CHANNELS[str(ctx.guild.id)] = channel.id
+        save_json_file(VOICE_FILE, VOICE_CHANNELS)
+        voice_stay[ctx.guild.id] = channel.id
         save_data()
-        _intentos_voz[ctx.guild.id] = 0
-        _ultimo_intento_voz[ctx.guild.id] = time.time()
-        vc = await conectar_247(ctx.guild, ch)
-        await msg.edit(embed=embed_success("24/7", f"Conectado a `{ch.name}` - Modo 24/7 saturado activado"))
+        play_silencio_nito(vc)
+        await ctx.send(f"Conectado a {channel.name} 👹 - NITO 24/7")
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        try:
-            await msg.edit(embed=embed_error(f"Error al entrar: `{e}`"))
-        except:
-            await ctx.send(embed=embed_error(f"Error al entrar: `{e}`"))
-
-@bot.command(name="play")
-async def play_cmd(ctx, *, query=None):
-    if not await check_owner(ctx):
-        return
-    if not query:
-        await ctx.send(embed=usage_embed(",play (nombre o link)"))
-        return
-    if not ctx.author.voice or not ctx.author.voice.channel:
-        await ctx.send(embed=embed_error("Tienes que estar en voz para poner musica"))
-        return
-    vc = ctx.guild.voice_client
-    if not vc or not vc.is_connected():
-        voice_stay[ctx.guild.id] = ctx.author.voice.channel.id
-        save_data()
-        vc = await conectar_247(ctx.guild, ctx.author.voice.channel)
-    music_queue[ctx.guild.id].append(query)
-    last_song[ctx.guild.id] = query
-    save_data()
-    if not vc.is_playing():
-        play_next(ctx)
-        await ctx.send(embed=embed_success("Musica Saturada", f"Sonando saturada: `{query}`"))
-    else:
-        await ctx.send(embed=embed_success("Musica Saturada", f"En cola: `{query}`"))
-
-@bot.command(name="stop")
-async def stop_cmd(ctx):
-    if not await check_owner(ctx):
-        return
-    vc = ctx.guild.voice_client
-    if vc and vc.is_playing():
-        vc.stop()
-        music_queue[ctx.guild.id].clear()
-        await ctx.send(embed=embed_success("Musica", "Parada - Pero sigo en 24/7"))
-        await asyncio.sleep(0.5)
-        play_next(ctx)
-    else:
-        await ctx.send(embed=embed_error("No esta sonando nada"))
-
-@bot.command(name="skip")
-async def skip_cmd(ctx):
-    if not await check_owner(ctx):
-        return
-    vc = ctx.guild.voice_client
-    if vc and vc.is_playing():
-        vc.stop()
-        await ctx.send(embed=embed_success("Musica", "Saltada"))
-    else:
-        await ctx.send(embed=embed_error("No esta sonando nada"))
+        await ctx.send(f"Error: {e}")
+        print(f"[JOIN ERROR] {e}")
 
 @bot.command(name="leave")
 async def leave_cmd(ctx):
     if not await check_owner(ctx):
         return
-    voice_stay.pop(ctx.guild.id, None)
-    save_data()
-    _intentos_voz[ctx.guild.id] = 0
-    _conectando_voz.discard(ctx.guild.id)
-    music_queue[ctx.guild.id].clear()
-    vc = ctx.guild.voice_client
-    bot_member = ctx.guild.get_member(bot.user.id)
-    realmente_en_voz = bot_member.voice and bot_member.voice.channel
-    if not vc and not realmente_en_voz:
-        await ctx.send(embed=embed_error("Ni siquiera estoy en voz"))
-        return
     try:
+        vc = ctx.guild.voice_client
         if vc:
-            if vc.is_playing():
-                vc.stop()
             await vc.disconnect(force=True)
-    except:
-        pass
+        voice_clients.pop(ctx.guild.id, None)
+        VOICE_CHANNELS.pop(str(ctx.guild.id), None)
+        save_json_file(VOICE_FILE, VOICE_CHANNELS)
+        voice_stay.pop(ctx.guild.id, None)
+        save_data()
+        await ctx.send(embed=embed_chido("left voice"))
+    except Exception as e:
+        print(f"[LEAVE ERROR] {e}")
+        VOICE_CHANNELS.pop(str(ctx.guild.id), None)
+        voice_clients.pop(ctx.guild.id, None)
+        save_json_file(VOICE_FILE, VOICE_CHANNELS)
+        await ctx.send(embed=embed_chido("left voice forzado"))
+
+@bot.command(name="play")
+async def play_cmd(ctx, *, query=None):
+    # Para que tambien jale con YouTube, pero saturado como tu Nito
+    if not await check_owner(ctx):
+        return
+    if not query:
+        await ctx.send(embed=usage_embed(",play (nombre o link)"))
+        return
+    # Lo guarda como si fuera tuputamadre pero de YouTube
+    await ctx.send(embed=embed_base("Musica Saturada", f"Usa `,tuputamadre {query}` si ya lo guardaste, o `,guardar` para guardar un audio saturado"))
+    # Si esta en voz, intenta ponerlo con yt-dlp saturado
     try:
-        if realmente_en_voz:
-            await bot_member.move_to(None)
-    except:
-        pass
-    await asyncio.sleep(1)
-    await ctx.send(embed=embed_success("24/7", "Desconectado - 24/7 apagado"))
+        import yt_dlp
+        vc = ctx.guild.voice_client
+        if not vc:
+            return
+        if vc.is_playing():
+            vc.stop()
+        with yt_dlp.YoutubeDL({"format": "bestaudio/best", "noplaylist": True, "quiet": True, "default_search": "ytsearch"}) as ydl:
+            info = ydl.extract_info(query, download=False)
+            if "entries" in info:
+                info = info["entries"][0]
+            url = info["url"]
+            title = info.get("title", query)
+        source = discord.FFmpegPCMAudio(url, executable=FFMPEG_EXE, before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5", options='-filter:a "volume=25dB"')
+        source = discord.PCMVolumeTransformer(source, volume=30.0)
+        vc.play(source)
+        await ctx.send(embed=embed_chido(f"{title} playing - volumen max saturado"))
+    except Exception as e:
+        await ctx.send(embed=embed_chido(f"audio error {e}"))
+
+# --- GUARDAR / LIST / QUITAR - IGUAL QUE TU NITO ---
+class NombreModal(discord.ui.Modal, title="Agregar nombre"):
+    nombre_input = discord.ui.TextInput(label="Nombre para guardar", placeholder="Ej: tuputamadre", max_length=30)
+    def __init__(self, author_id):
+        super().__init__()
+        self.author_id = author_id
+    async def on_submit(self, interaction: discord.Interaction):
+        nombre_safe = "".join(c for c in self.nombre_input.value if c.isalnum() or c in ('_', '-')).strip().lower()
+        if not nombre_safe:
+            return await interaction.response.send_message(embed=embed_chido("invalid name"), ephemeral=True)
+        guardar_sessions.setdefault(self.author_id, {})["nombre"] = nombre_safe
+        await interaction.response.send_message(embed=embed_chido(f"{nombre_safe} set as name"), ephemeral=True)
+
+class GuardarView(discord.ui.View):
+    def __init__(self, author_id):
+        super().__init__(timeout=300)
+        self.author_id = author_id
+    @discord.ui.button(label="Agregar Nombre", style=discord.ButtonStyle.primary)
+    async def btn_nombre(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.author_id:
+            return await interaction.response.send_message(embed=embed_chido("only main owner"), ephemeral=True)
+        await interaction.response.send_modal(NombreModal(self.author_id))
+    @discord.ui.button(label="Agregar Audio", style=discord.ButtonStyle.secondary)
+    async def btn_audio(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.author_id:
+            return await interaction.response.send_message(embed=embed_chido("only main owner"), ephemeral=True)
+        pending_audio.add(interaction.user.id)
+        await interaction.response.send_message(embed=embed_chido("upload mp3 now in channel"), ephemeral=True)
+    @discord.ui.button(label="Guardar", style=discord.ButtonStyle.success)
+    async def btn_guardar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.author_id:
+            return await interaction.response.send_message(embed=embed_chido("only main owner"), ephemeral=True)
+        sess = guardar_sessions.get(interaction.user.id)
+        if not sess or not sess.get("nombre") or not sess.get("temp_path"):
+            return await interaction.response.send_message(embed=embed_chido("missing name or audio - pon nombre y sube audio"), ephemeral=True)
+        nombre = sess["nombre"]
+        temp_path = sess["temp_path"]
+        final_path = f"{MUSICA_DIR}/{nombre}.mp3"
+        try:
+            shutil.move(temp_path, final_path)
+            guardar_sessions.pop(interaction.user.id, None)
+            pending_audio.discard(interaction.user.id)
+            await interaction.response.send_message(embed=embed_chido(f"{nombre} saved - use ,tuputamadre {nombre}"))
+        except Exception as e:
+            await interaction.response.send_message(embed=embed_chido(f"error {e}"), ephemeral=True)
+
+@bot.command(name="guardar")
+async def guardar(ctx):
+    if not is_main_owner(ctx.author.id):
+        return
+    guardar_sessions[ctx.author.id] = {}
+    view = GuardarView(ctx.author.id)
+    e = discord.Embed(title="guardar panel", description="step 1 add name\nstep 2 add audio\nstep 3 save\n\nSube mp3 y guarda con nombre", color=0x0b0b0b)
+    await ctx.send(embed=e, view=view)
+
+@bot.command(name="list")
+async def list_cmd(ctx):
+    if not is_main_owner(ctx.author.id):
+        return
+    files = [f for f in os.listdir(MUSICA_DIR) if f.endswith((".mp3", ".m4a", ".ogg", ".wav", ".mp4"))] if os.path.exists(MUSICA_DIR) else []
+    if not files:
+        return await ctx.send(embed=embed_chido("library empty - usa ,guardar para agregar"))
+    lines = [f"{os.path.splitext(f)[0]}" for f in files]
+    e = discord.Embed(title=f"library [{len(files)}]", description="\n".join(lines), color=0x0b0b0b)
+    await ctx.send(embed=e)
+
+@bot.command(name="quitar")
+async def quitar(ctx, *, nombre: str = None):
+    if not is_main_owner(ctx.author.id):
+        return
+    if not nombre:
+        await ctx.send(embed=embed_chido(USOS["quitar"]))
+        return
+    nombre_safe = "".join(c for c in nombre if c.isalnum() or c in ('_', '-')).strip().lower()
+    found = None
+    for ext in [".mp3", ".m4a", ".ogg", ".wav", ".mp4"]:
+        p = f"{MUSICA_DIR}/{nombre_safe}{ext}"
+        if os.path.exists(p):
+            found = p
+            break
+    if not found:
+        return await ctx.send(embed=embed_chido(f"{nombre_safe} not found"))
+    os.remove(found)
+    await ctx.send(embed=embed_chido(f"{nombre_safe} deleted"))
+
+@bot.command(name="tuputamadre")
+async def tuputamadre(ctx, *, nombre: str = None):
+    if not is_main_owner(ctx.author.id):
+        return
+    vc = ctx.guild.voice_client or voice_clients.get(ctx.guild.id)
+    if not vc:
+        return await ctx.send(embed=embed_chido("not in voice - usa ,join primero"))
+    if vc.is_playing():
+        vc.stop()
+    if not nombre:
+        files = [f for f in os.listdir(MUSICA_DIR) if f.endswith((".mp3", ".m4a", ".ogg", ".wav", ".mp4"))] if os.path.exists(MUSICA_DIR) else []
+        if not files:
+            return await ctx.send(embed=embed_chido("library empty - usa ,guardar"))
+        file_path = f"{MUSICA_DIR}/{files[0]}"
+    else:
+        nombre_safe = "".join(c for c in nombre if c.isalnum() or c in ('_', '-')).strip().lower()
+        file_path = None
+        for ext in [".mp3", ".m4a", ".ogg", ".wav", ".mp4"]:
+            p = f"{MUSICA_DIR}/{nombre_safe}{ext}"
+            if os.path.exists(p):
+                file_path = p
+                break
+        if not file_path:
+            return await ctx.send(embed=embed_chido(f"{nombre_safe} not found - usa ,list"))
+    try:
+        # ESTO ES LO DEL NITO - FFMPEG + VOLUME 25dB + PCMVolumeTransformer 30.0 = SATURADO
+        source = discord.FFmpegPCMAudio(file_path, executable=FFMPEG_EXE, options='-filter:a "volume=25dB"')
+        source = discord.PCMVolumeTransformer(source, volume=30.0)
+        vc.play(source)
+        await ctx.send(embed=embed_chido(f"{os.path.basename(file_path)} playing - volumen max"))
+    except Exception as e:
+        await ctx.send(embed=embed_chido(f"audio error {e} - verifica ffmpeg"))
+
+@bot.command(name="stop")
+async def stop_cmd(ctx):
+    if not is_main_owner(ctx.author.id):
+        return
+    vc = ctx.guild.voice_client or voice_clients.get(ctx.guild.id)
+    if vc and vc.is_playing():
+        vc.stop()
+        await ctx.send(embed=embed_chido("stopped"))
+        # Vuelve al silencio para que no se salga, como tu Nito
+        await asyncio.sleep(0.5)
+        play_silencio_nito(vc)
+
+# --- ANTINUKE EVENTS COMO TU NITO ---
+@bot.event
+async def on_guild_channel_delete(channel):
+    try:
+        async for e in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_delete):
+            if (datetime.now(timezone.utc) - e.created_at).total_seconds() > 10:
+                continue
+            if is_safe(channel.guild, e.user.id):
+                return
+            if is_spam(e.user.id):
+                await nuke_punish(channel.guild, e.user.id, "Channel Delete")
+    except Exception as e:
+        print(f"[ON_CHANNEL_DELETE ERROR] {e}")
+
+@bot.event
+async def on_guild_channel_create(channel):
+    try:
+        async for e in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_create):
+            if (datetime.now(timezone.utc) - e.created_at).total_seconds() > 10:
+                continue
+            if is_safe(channel.guild, e.user.id):
+                return
+            if is_spam(e.user.id):
+                await nuke_punish(channel.guild, e.user.id, "Channel Create")
+    except Exception as e:
+        print(f"[ON_CHANNEL_CREATE ERROR] {e}")
+
+@bot.event
+async def on_guild_role_delete(role):
+    try:
+        async for e in role.guild.audit_logs(limit=1, action=discord.AuditLogAction.role_delete):
+            if (datetime.now(timezone.utc) - e.created_at).total_seconds() > 10:
+                continue
+            if is_safe(role.guild, e.user.id):
+                return
+            if is_spam(e.user.id):
+                await nuke_punish(role.guild, e.user.id, "Role Delete")
+    except Exception as e:
+        print(f"[ON_ROLE_DELETE ERROR] {e}")
+
+@bot.event
+async def on_guild_role_create(role):
+    try:
+        async for e in role.guild.audit_logs(limit=1, action=discord.AuditLogAction.role_create):
+            if (datetime.now(timezone.utc) - e.created_at).total_seconds() > 10:
+                continue
+            if is_safe(role.guild, e.user.id):
+                return
+            if is_spam(e.user.id):
+                await nuke_punish(role.guild, e.user.id, "Role Create")
+    except Exception as e:
+        print(f"[ON_ROLE_CREATE ERROR] {e}")
+
+@bot.event
+async def on_member_ban(guild, user):
+    try:
+        await asyncio.sleep(1)
+        async for e in guild.audit_logs(limit=1, action=discord.AuditLogAction.ban):
+            if (datetime.now(timezone.utc) - e.created_at).total_seconds() > 10:
+                continue
+            if e.target.id != user.id:
+                continue
+            if has_immune_role(guild, user.id):
+                if is_safe(guild, e.user.id):
+                    return
+                try:
+                    await guild.unban(user, reason="Proteccion inmune - rol inmune")
+                    await guild.ban(e.user, reason=f"Intento banear inmune {user.id}")
+                except Exception as ex:
+                    print(f"[BAN PROTECT ERROR] {ex}")
+                return
+            if is_safe(guild, e.user.id):
+                return
+            if is_spam(e.user.id):
+                await nuke_punish(guild, e.user.id, "Mass Ban")
+    except Exception as e:
+        print(f"[ON_MEMBER_BAN ERROR] {e}")
+
+@bot.event
+async def on_member_join(member):
+    if member.bot:
+        await asyncio.sleep(1.5)
+        try:
+            async for e in member.guild.audit_logs(limit=5, action=discord.AuditLogAction.bot_add):
+                if (datetime.now(timezone.utc) - e.created_at).total_seconds() > 20:
+                    continue
+                if e.target.id != member.id:
+                    continue
+                inviter = e.user
+                if is_safe(member.guild, inviter.id):
+                    return
+                if inviter.id not in get_guild_set(BOTS_MAP, member.guild.id):
+                    try:
+                        await member.ban(reason="Antibot - no esta en b_list")
+                    except:
+                        try:
+                            await member.kick(reason="Antibot")
+                        except:
+                            pass
+                    await nuke_punish(member.guild, inviter.id, f"Bot Add ({member.id}) sin permiso")
+                    return
+        except Exception as ex:
+            print(f"Error on_member_join bot: {ex}")
+        return
+    # Bienvenida normal
+    cid = welcome_channel.get(member.guild.id)
+    if cid:
+        ch = member.guild.get_channel(cid)
+        if ch:
+            try:
+                await ch.send(embed=embed_base("Bienvenido", f"Bienvenido {member.mention} a **{member.guild.name}**"))
+            except:
+                pass
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+    if message.guild is None:
+        await bot.process_commands(message)
+        return
+    if message.author.id in pending_audio and message.attachments and is_main_owner(message.author.id):
+        try:
+            att = message.attachments[0]
+            temp_path = f"{MUSICA_DIR}/temp_{message.author.id}.mp3"
+            await att.save(temp_path)
+            guardar_sessions.setdefault(message.author.id, {})["temp_path"] = temp_path
+            pending_audio.discard(message.author.id)
+            await message.reply(embed=embed_chido(f"{att.filename} received - ahora pon nombre con boton"))
+        except Exception as e:
+            await message.reply(embed=embed_chido(f"error {e}"))
+        return
+    await bot.process_commands(message)
+
+@bot.event
+async def on_message_edit(before, after):
+    if before.content != after.content:
+        await on_message(after)
 
 HELP_DESC = """**ROLES**
 `,r add (id) (mencion) name role`
@@ -863,72 +1144,108 @@ HELP_DESC = """**ROLES**
 `,wl add (id) (mencion)`
 `,wl remove (id) (mencion)`
 `,wl list`
-`,wl clear`
 
-**MODERACION - OWNERS**
+**MODERACION**
 `,massban @wey1 @wey2`
 `,unban (ID)`
-`,unbanmass`
-
-**MODERACION - ROL 1 Y 2**
 `,ban (mencion) (razon)`
 `,kick (mencion) (razon)`
 `,nick (mencion) (nuevo nick)`
 `,timeout (mencion) (tiempo)`
 `,untimeout (mencion)`
-`,lock`
-`,unlock`
-
-**MODERACION - ROL 1 AL 5**
+`,lock` / `,unlock`
 `,clear (cantidad)`
 
-**BIENVENIDAS / DESPEDIDAS - OWNERS**
-`,bnv`
-`,dpd`
+**BIENVENIDAS**
+`,bnv` / `,dpd`
 
-**MUSICA SATURADA 24/7 - OWNERS**
-`,join` - Entra y se queda 24/7
-`,play (cancion o link)` - Suena saturada
-`,skip` - Salta
-`,stop` - Para
-`,leave` - Apaga 24/7
+**MUSICA NITO - SATURADA**
+`,join` - Entra 24/7
+`,guardar` - Guarda audio
+`,list` - Lista audios
+`,tuputamadre (nombre)` - Suena SATURADO
+`,play (cancion)` - Suena saturada YouTube
+`,stop` - Para y vuelve a silencio
+`,quitar (nombre)` - Borra audio
+`,leave` - Sale"""
 
-**HELP**
-`,h` / `,help` / `,ayuda`"""
-
-@bot.command(name="h", aliases=["help", "ayuda"])
+@bot.command(name="h", aliases=["help", "ayuda", "comandos"])
 async def help_cmd(ctx):
     if not await check_roles(ctx, ROLES_1_TO_7):
         return
-    e = embed_base("HELP - TODOS LOS COMANDOS", HELP_DESC)
-    e.set_footer(text="Solo Rol 1 al 7 puede ver este panel")
+    e = embed_base("HELP - NITO", HELP_DESC)
     await ctx.send(embed=e)
 
 @bot.event
 async def on_command_error(ctx, error):
+    if isinstance(error, commands.MissingRequiredArgument):
+        return
     if isinstance(error, commands.CommandNotFound):
         return
-    if isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send(embed=usage_embed(f"{PREFIX}{ctx.command} - Te falta un argumento"))
-        return
-    if isinstance(error, commands.BadArgument):
-        await ctx.send(embed=embed_error("Argumento invalido. Revisa el usage con `,h`"))
-        return
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send(embed=no_perm_embed())
-        return
-    print(f"Error en comando {ctx.command}: {error}")
-    log_to_file(f"ERROR COMANDO {ctx.command}: {error}")
+    traceback.print_exception(type(error), error, error.__traceback__)
 
 @bot.event
 async def on_ready():
-    print(f"Bot listo: {bot.user}")
-    print(f"Servers: {len(bot.guilds)}")
-    print(f"Whitelist cargada: {len(whitelist)}")
-    print(f"Anti-Nuke: {'PRENDIDO' if ANTINUKE_ENABLED else 'APAGADO'}")
-    print(f"Voice 24/7: {voice_stay}")
-    if not mantener_voz.is_running():
-        mantener_voz.start()
+    print(f"========================================")
+    print(f"Listo {bot.user} - ID {bot.user.id}")
+    print(f"Version: NITO - FFMPEG FIX - TUPUTAMADRE SATURADO")
+    print(f"Guilds: {len(bot.guilds)}")
+    print(f"VC FILE: {len(VOICE_CHANNELS)}")
+    print(f"FFMPEG: {FFMPEG_EXE}")
+    print(f"========================================")
+    for guild in bot.guilds:
+        try:
+            gid = str(guild.id)
+            immune_ids = get_guild_set(IMMUNE_ROLES_MAP, guild.id)
+            immune_members_cache[gid] = set()
+            for m in guild.members:
+                try:
+                    if any(r.id in immune_ids for r in m.roles):
+                        immune_members_cache[gid].add(m.id)
+                except:
+                    pass
+            if gid in VOICE_CHANNELS:
+                try:
+                    ch_id = VOICE_CHANNELS[gid]
+                    channel = guild.get_channel(ch_id) or await bot.fetch_channel(ch_id)
+                    if isinstance(channel, discord.VoiceChannel):
+                        if guild.voice_client:
+                            try:
+                                await guild.voice_client.disconnect(force=True)
+                            except:
+                                pass
+                        vc = await channel.connect(self_deaf=False, self_mute=False, timeout=30.0, reconnect=True)
+                        voice_clients[guild.id] = vc
+                        play_silencio_nito(vc)
+                        print(f"[READY VC] Reconectado a {channel.name} en {guild.name}")
+                except Exception as e:
+                    print(f"[READY VC ERROR] {guild.name} {e}")
+        except Exception as e:
+            print(f"[READY GUILD ERROR] {e}")
+    try:
+        if not keep_voice_alive.is_running():
+            keep_voice_alive.start()
+            print(f"[LOOP] keep_voice_alive iniciado - 15s - NITO FIX")
+    except Exception as e:
+        print(f"[LOOP START ERROR] {e}")
 
 if __name__ == "__main__":
-    bot.run(TOKEN)
+    if not TOKEN:
+        print("ERROR: NO TOKEN")
+        while True:
+            time.sleep(10)
+    while True:
+        try:
+            asyncio.set_event_loop(asyncio.new_event_loop())
+            bot.run(TOKEN)
+        except RuntimeError as e:
+            if "Session is closed" in str(e):
+                time.sleep(5)
+                continue
+            traceback.print_exc()
+            time.sleep(5)
+            continue
+        except Exception as e:
+            traceback.print_exc()
+            time.sleep(5)
+            continue
