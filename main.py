@@ -1,13 +1,6 @@
 # ============================================================
-#  BOT COMPLETO - 8 SISTEMAS
-#  1. Roles
-#  2. Whitelist
-#  3. Anti-Nuke - Siempre prendido, sin comandos
-#  4. Moderacion
-#  5. Bienvenidas / Despedidas
-#  6. Estetica + Usage + Sin Permiso
-#  7. Voice 24/7 - SIMPLE COMO ANTES, SIN BUCLE
-#  8. Help - ,h / ,help / ,ayuda
+#  BOT COMPLETO - 8 SISTEMAS - ARREGLADO
+#  FIX: ,leave ya si saca a fuerza + auto-reconecte si lo sacan manual
 # ============================================================
 
 import discord
@@ -15,7 +8,7 @@ from discord.ext import commands, tasks
 import asyncio
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 
 # ============================================================
@@ -99,6 +92,8 @@ voice_lock = {int(k): v for k, v in _saved.get("voice_lock", {}).items()}
 
 action_log = defaultdict(list)
 antinuke_bans = defaultdict(int)
+# FIX LEAVE: set para que no reconecte cuando TU le das ,leave
+leaving = set()
 
 # ============================================================
 #  HELPERS
@@ -171,7 +166,7 @@ def format_time(seconds):
     return f"{seconds // 86400}d"
 
 # ============================================================
-#  ANTI-NUKE
+#  ANTI-NUKE - FIX: get_audit_user ahora usa timezone.utc bien
 # ============================================================
 
 async def antinuke_check(guild, user, action_name):
@@ -181,7 +176,7 @@ async def antinuke_check(guild, user, action_name):
         return False
     if user.id in OWNER_IDS or user.id in whitelist:
         return False
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     key = (guild.id, user.id, action_name)
     action_log[key] = [t for t in action_log[key] if (now - t).total_seconds() < ANTINUKE_TIME]
     action_log[key].append(now)
@@ -201,11 +196,12 @@ async def antinuke_check(guild, user, action_name):
 async def get_audit_user(guild, action):
     try:
         async for entry in guild.audit_logs(limit=1, action=action):
-            diff = (datetime.now(entry.created_at.tzinfo) - entry.created_at).total_seconds()
+            # FIX: antes usabas datetime.now(entry.created_at.tzinfo) que a veces fallaba
+            diff = (datetime.now(timezone.utc) - entry.created_at).total_seconds()
             if diff < 5:
                 return entry.user
-    except:
-        pass
+    except Exception as e:
+        print(f"Audit error: {e}")
     return None
 
 @bot.event
@@ -675,10 +671,34 @@ async def on_member_remove(member):
                 pass
 
 # ============================================================
-#  7. VOICE 24/7 - SIMPLE COMO ANTES, SIN KEEPALIVE, SIN BUCLE
-#  NO HAY on_voice_state_update, NO HAY voice_keepalive, NO HAY asegurar_voz
-#  discord.py ya reconecta solo por dentro
+#  7. VOICE 24/7 - ARREGLADO
+#  - ,leave ahora si saca con move_to(None) + disconnect(force=True)
+#  - on_voice_state_update: si lo sacan manual, regresa solo. Si fue ,leave, NO regresa
+#  - on_ready: si se reinicia, regresa solo si voice_lock = True
 # ============================================================
+
+@bot.event
+async def on_voice_state_update(member, before, after):
+    # Solo nos importa el bot
+    if member.id != bot.user.id:
+        return
+    # Lo sacaron de voz
+    if after.channel is None and before.channel is not None:
+        gid = member.guild.id
+        await asyncio.sleep(5)
+        # FIX: Si le diste ,leave, NO regresa
+        if gid in leaving:
+            return
+        if not voice_lock.get(gid):
+            return
+        cid = voice_stay.get(gid)
+        ch = member.guild.get_channel(cid) if cid else None
+        if ch:
+            try:
+                await ch.connect()
+                print(f"[VOICE] Me sacaron manual, regrese a {ch.name}")
+            except Exception as e:
+                print(f"[VOICE] No pude regresar: {e}")
 
 class VoiceSelect(discord.ui.Select):
     def __init__(self, guild):
@@ -701,6 +721,7 @@ class VoiceSelect(discord.ui.Select):
             voice_stay[interaction.guild_id] = cid
             voice_lock[interaction.guild_id] = True
             save_data()
+            leaving.discard(interaction.guild_id)
             await interaction.response.send_message(embed=embed_success("Voice", f"Conectado a `{ch.name}` 24/7"), ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(embed=embed_error(f"No pude entrar: `{e}`"), ephemeral=True)
@@ -725,6 +746,7 @@ async def join_cmd(ctx):
             voice_stay[ctx.guild.id] = ch.id
             voice_lock[ctx.guild.id] = True
             save_data()
+            leaving.discard(ctx.guild.id)
             await ctx.send(embed=embed_success("Voice", f"Conectado a `{ch.name}` 24/7"))
         else:
             if not ctx.guild.voice_channels:
@@ -738,15 +760,37 @@ async def join_cmd(ctx):
 async def leave_cmd(ctx):
     if not await check_owner(ctx):
         return
-    vc = ctx.guild.voice_client
+    # FIX 1: Apagar candado PRIMERO y marcar que estamos en ,leave
     voice_lock[ctx.guild.id] = False
     voice_stay.pop(ctx.guild.id, None)
     save_data()
+    leaving.add(ctx.guild.id)
+
+    # FIX 2: Sacarlo por voice_client con force
+    vc = ctx.guild.voice_client
     if vc:
         try:
-            await vc.disconnect()
+            await vc.disconnect(force=True)
         except:
             pass
+
+    # FIX 3: ESTE ES EL QUE FALTABA - Sacarlo con move_to(None) a fuerza
+    try:
+        bot_member = ctx.guild.get_member(bot.user.id)
+        if bot_member and bot_member.voice:
+            await bot_member.move_to(None)
+    except Exception as e:
+        print(f"No pude moverlo: {e}")
+
+    # FIX 4: Limpiar cualquier voice_client bugueado
+    for vc2 in list(bot.voice_clients):
+        try:
+            await vc2.disconnect(force=True)
+        except:
+            pass
+
+    await asyncio.sleep(2)
+    leaving.discard(ctx.guild.id)
     await ctx.send(embed=embed_success("Voice", "Desconectado. Ya no voy a reconectar hasta que pongas `,join`"))
 
 # ============================================================
@@ -830,6 +874,21 @@ async def on_ready():
     print(f"Voice lock: {voice_lock}")
     print(f"Anti-Nuke: {'PRENDIDO' if ANTINUKE_ENABLED else 'APAGADO'}")
     print(f"========================================")
+    # FIX: Si se reinicio y tenia que estar en voz, regresa solo
+    for gid, locked in list(voice_lock.items()):
+        if not locked:
+            continue
+        guild = bot.get_guild(gid)
+        if not guild:
+            continue
+        cid = voice_stay.get(gid)
+        ch = guild.get_channel(cid) if cid else None
+        if ch and not guild.voice_client:
+            try:
+                await ch.connect()
+                print(f"[VOICE] Regrese a {ch.name} en {guild.name} despues de reinicio")
+            except Exception as e:
+                print(f"[VOICE] No pude regresar en {guild.name}: {e}")
 
 # ============================================================
 #  RUN
