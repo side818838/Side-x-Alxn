@@ -6,7 +6,7 @@
 #  4. Moderacion
 #  5. Bienvenidas / Despedidas
 #  6. Estetica + Usage + Sin Permiso
-#  7. Voice 24/7
+#  7. Voice 24/7 - SIMPLE COMO ANTES, SIN BUCLE
 #  8. Help - ,h / ,help / ,ayuda
 # ============================================================
 
@@ -25,12 +25,10 @@ from collections import defaultdict
 TOKEN = os.getenv("DISCORD_BOT_TOKEN") or os.getenv("TOKEN")
 PREFIX = ","
 
-# IDs de Owners - Solo ellos pueden usar comandos de Owner
 OWNER_IDS = [
     1310357536087740450,
 ]
 
-# IDs de tus roles 1 al 7 - PON TUS IDS REALES AQUI
 ROLE_1 = 111111111111111111
 ROLE_2 = 222222222222222222
 ROLE_3 = 333333333333333333
@@ -74,7 +72,7 @@ def load_data():
                 return json.load(f)
         except:
             pass
-    return {"whitelist": [], "welcome_channel": {}, "goodbye_channel": {}, "voice_stay": {}, "voice_lock": {}, "antinuqe_logs": []}
+    return {"whitelist": [], "welcome_channel": {}, "goodbye_channel": {}, "voice_stay": {}, "voice_lock": {}}
 
 def save_data():
     try:
@@ -659,17 +657,14 @@ async def on_member_join(member):
             except:
                 pass
 
-# UN SOLO on_member_remove para que no se borre el anti-nuke ni despedidas
 @bot.event
 async def on_member_remove(member):
-    # Parte Anti-Nuke: checar si fue kick
     try:
         audit_user = await get_audit_user(member.guild, discord.AuditLogAction.kick)
         if audit_user:
             await antinuke_check(member.guild, audit_user, "kick")
     except:
         pass
-    # Parte Despedidas
     cid = goodbye_channel.get(member.guild.id)
     if cid:
         ch = member.guild.get_channel(cid)
@@ -680,7 +675,9 @@ async def on_member_remove(member):
                 pass
 
 # ============================================================
-#  7. VOICE 24/7 - ARREGLADO
+#  7. VOICE 24/7 - SIMPLE COMO ANTES, SIN KEEPALIVE, SIN BUCLE
+#  NO HAY on_voice_state_update, NO HAY voice_keepalive, NO HAY asegurar_voz
+#  discord.py ya reconecta solo por dentro
 # ============================================================
 
 class VoiceSelect(discord.ui.Select):
@@ -700,11 +697,11 @@ class VoiceSelect(discord.ui.Select):
             if vc:
                 await vc.move_to(ch)
             else:
-                await ch.connect(reconnect=True, timeout=10, self_deaf=True)
+                await ch.connect()
             voice_stay[interaction.guild_id] = cid
             voice_lock[interaction.guild_id] = True
             save_data()
-            await interaction.response.send_message(embed=embed_success("Voice", f"Conectado a `{ch.name}` 24/7\nSi me sacan, regreso en 1 segundo"), ephemeral=True)
+            await interaction.response.send_message(embed=embed_success("Voice", f"Conectado a `{ch.name}` 24/7"), ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(embed=embed_error(f"No pude entrar: `{e}`"), ephemeral=True)
 
@@ -724,11 +721,11 @@ async def join_cmd(ctx):
             if vc:
                 await vc.move_to(ch)
             else:
-                await ch.connect(reconnect=True, timeout=10, self_deaf=True)
+                await ch.connect()
             voice_stay[ctx.guild.id] = ch.id
             voice_lock[ctx.guild.id] = True
             save_data()
-            await ctx.send(embed=embed_success("Voice", f"Conectado a `{ch.name}` 24/7\nSi me sacan, regreso en 1 segundo"))
+            await ctx.send(embed=embed_success("Voice", f"Conectado a `{ch.name}` 24/7"))
         else:
             if not ctx.guild.voice_channels:
                 await ctx.send(embed=embed_error("Este server no tiene canales de voz"))
@@ -747,56 +744,10 @@ async def leave_cmd(ctx):
     save_data()
     if vc:
         try:
-            await vc.disconnect(force=True)
+            await vc.disconnect()
         except:
             pass
     await ctx.send(embed=embed_success("Voice", "Desconectado. Ya no voy a reconectar hasta que pongas `,join`"))
-
-@bot.event
-async def on_voice_state_update(member, before, after):
-    if member.id == bot.user.id:
-        gid = member.guild.id
-        if voice_lock.get(gid) and after.channel is None:
-            await asyncio.sleep(1)
-            if not voice_lock.get(gid):
-                return
-            cid = voice_stay.get(gid)
-            ch = member.guild.get_channel(cid) if cid else None
-            if ch:
-                for intento in range(5):
-                    try:
-                        vc = member.guild.voice_client
-                        if vc and vc.is_connected():
-                            return
-                        if vc:
-                            try: await vc.disconnect(force=True)
-                            except: pass
-                        await ch.connect(reconnect=True, timeout=10, self_deaf=True)
-                        print(f"[VOICE] Reconectado a {ch.name} en {member.guild.name}")
-                        return
-                    except Exception as e:
-                        print(f"[VOICE] Reintento {intento+1}: {e}")
-                        await asyncio.sleep(2)
-
-@tasks.loop(seconds=10)
-async def voice_keepalive():
-    for guild in bot.guilds:
-        gid = guild.id
-        if voice_lock.get(gid):
-            cid = voice_stay.get(gid)
-            if cid:
-                ch = guild.get_channel(cid)
-                if ch:
-                    vc = guild.voice_client
-                    if not vc or not vc.is_connected():
-                        try:
-                            if vc:
-                                try: await vc.disconnect(force=True)
-                                except: pass
-                            await ch.connect(reconnect=True, timeout=10, self_deaf=True)
-                            print(f"[VOICE KEEPALIVE] Reconectado a {ch.name}")
-                        except:
-                            pass
 
 # ============================================================
 #  8. HELP
@@ -879,20 +830,6 @@ async def on_ready():
     print(f"Voice lock: {voice_lock}")
     print(f"Anti-Nuke: {'PRENDIDO' if ANTINUKE_ENABLED else 'APAGADO'}")
     print(f"========================================")
-    if not voice_keepalive.is_running():
-        voice_keepalive.start()
-    for guild in bot.guilds:
-        gid = guild.id
-        if voice_lock.get(gid):
-            cid = voice_stay.get(gid)
-            if cid:
-                ch = guild.get_channel(cid)
-                if ch and (guild.voice_client is None or not guild.voice_client.is_connected()):
-                    try:
-                        await ch.connect(reconnect=True, timeout=10, self_deaf=True)
-                        print(f"[VOICE] Reconectado al iniciar en {ch.name}")
-                    except Exception as e:
-                        print(f"[VOICE] No pude reconectar al iniciar: {e}")
 
 # ============================================================
 #  RUN
