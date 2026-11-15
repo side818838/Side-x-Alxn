@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import time
+import yt_dlp
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 
@@ -32,6 +33,13 @@ ANTINUKE_BAN_REASON = "Anti-Nuke: Accion masiva detectada"
 DATA_FILE = "data.json"
 LOG_FILE = "logs.txt"
 
+# FILTRO SATURADO - COMO TU PRIMER BOT
+# bassboost + volumen alto + compresor = saturada
+FFMPEG_SATURADA = "-af bass=g=18:f=110,volume=2.5,acompressor=threshold=-18dB:ratio=20:attack=1:release=50,alimiter=limit=0.95 -vn -loglevel panic"
+FFMPEG_OPTIONS = {"before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5", "options": FFMPEG_SATURADA}
+
+YTDL_OPTIONS = {"format": "bestaudio/best", "noplaylist": True, "quiet": True, "no_warnings": True, "default_search": "ytsearch", "source_address": "0.0.0.0"}
+
 intents = discord.Intents.all()
 intents.members = True
 intents.message_content = True
@@ -47,11 +55,11 @@ def load_data():
                 return json.load(f)
         except:
             pass
-    return {"whitelist": [], "welcome_channel": {}, "goodbye_channel": {}, "voice_stay": {}, "voice_lock": {}}
+    return {"whitelist": [], "welcome_channel": {}, "goodbye_channel": {}, "voice_stay": {}, "voice_lock": {}, "last_song": {}}
 
 def save_data():
     try:
-        data = {"whitelist": list(whitelist), "welcome_channel": welcome_channel, "goodbye_channel": goodbye_channel, "voice_stay": voice_stay, "voice_lock": voice_lock}
+        data = {"whitelist": list(whitelist), "welcome_channel": welcome_channel, "goodbye_channel": goodbye_channel, "voice_stay": voice_stay, "voice_lock": voice_lock, "last_song": last_song}
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
     except Exception as e:
@@ -71,12 +79,14 @@ welcome_channel = {int(k): v for k, v in _saved.get("welcome_channel", {}).items
 goodbye_channel = {int(k): v for k, v in _saved.get("goodbye_channel", {}).items()}
 voice_stay = {int(k): v for k, v in _saved.get("voice_stay", {}).items()}
 voice_lock = {int(k): v for k, v in _saved.get("voice_lock", {}).items()}
+last_song = {int(k): v for k, v in _saved.get("last_song", {}).items()}
 
 action_log = defaultdict(list)
 antinuke_bans = defaultdict(int)
 _ultimo_intento_voz = {}
 _intentos_voz = defaultdict(int)
 _conectando_voz = set()
+music_queue = defaultdict(list)
 
 def embed_base(title, desc=""):
     e = discord.Embed(title=title, description=desc, color=0x111111)
@@ -628,34 +638,51 @@ async def on_member_remove(member):
             except:
                 pass
 
-class SilentSource(discord.AudioSource):
-    def __init__(self):
-        self.encoder = discord.opus.Encoder()
-    def read(self):
-        try:
-            return self.encoder.encode(b"\x00" * 3840, 960)
-        except:
-            return b"\x00" * 2
-    def is_opus(self):
-        return True
-    def cleanup(self):
-        pass
+def get_ytdl_url(query):
+    with yt_dlp.YoutubeDL(YTDL_OPTIONS) as ydl:
+        info = ydl.extract_info(query, download=False)
+        if "entries" in info:
+            info = info["entries"][0]
+        return info["url"], info.get("title", "Sin titulo")
 
-def start_247(vc):
-    if vc and vc.is_connected() and not vc.is_playing():
-        try:
-            vc.play(SilentSource(), after=lambda e: start_247_after(vc))
-        except Exception as e:
-            print(f"[24/7] Error audio silencio: {e}")
+def play_next(ctx_or_guild):
+    guild = ctx_or_guild.guild if hasattr(ctx_or_guild, "guild") else ctx_or_guild
+    vc = guild.voice_client
+    if not vc or not vc.is_connected():
+        return
+    if vc.is_playing():
+        return
+    if not music_queue[guild.id]:
+        # Si se acabo la cola, vuelve a poner la ultima cancion en loop = 24/7
+        if guild.id in last_song:
+            music_queue[guild.id].append(last_song[guild.id])
+        else:
+            # Si nunca puso cancion, pone silencio con ffmpeg para no salirse
+            try:
+                source = discord.FFmpegPCMAudio("anullsrc=r=48000:cl=stereo", before_options="-f lavfi -i anullsrc=r=48000:cl=stereo -t 0 -reconnect 1", options="-vn -loglevel panic")
+                vc.play(source, after=lambda e: play_next_after(guild))
+            except:
+                pass
+            return
+    song = music_queue[guild.id].pop(0)
+    try:
+        url, title = get_ytdl_url(song)
+        source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
+        last_song[guild.id] = song
+        save_data()
+        vc.play(source, after=lambda e: play_next_after(guild))
+        print(f"[MUSICA] Sonando saturada: {title}")
+    except Exception as e:
+        print(f"[MUSICA] Error: {e}")
+        play_next(guild)
 
-def start_247_after(vc):
-    if vc and vc.is_connected() and vc.guild.id in voice_stay:
-        asyncio.run_coroutine_threadsafe(reconnect_silencio(vc), bot.loop)
+def play_next_after(guild):
+    if guild.id in voice_stay:
+        asyncio.run_coroutine_threadsafe(play_next_async(guild), bot.loop)
 
-async def reconnect_silencio(vc):
+async def play_next_async(guild):
     await asyncio.sleep(0.5)
-    if vc and vc.is_connected() and vc.guild.id in voice_stay and not vc.is_playing():
-        start_247(vc)
+    play_next(guild)
 
 async def conectar_247(guild, ch):
     if guild.id in _conectando_voz:
@@ -671,7 +698,10 @@ async def conectar_247(guild, ch):
             await asyncio.sleep(2)
         vc = await ch.connect(self_deaf=False, self_mute=False, reconnect=True, timeout=20.0)
         await asyncio.sleep(1)
-        start_247(vc)
+        # Al entrar, si ya habia cancion, la vuelve a poner saturada
+        if guild.id in last_song:
+            music_queue[guild.id].insert(0, last_song[guild.id])
+        play_next(guild)
         return vc
     finally:
         _conectando_voz.discard(guild.id)
@@ -693,7 +723,7 @@ async def mantener_voz():
             if vc and vc.is_connected() and realmente_en_voz and realmente_en_voz.id == ch_id:
                 _intentos_voz[guild.id] = 0
                 if not vc.is_playing():
-                    start_247(vc)
+                    play_next(guild)
                 continue
             ahora = time.time()
             if ahora - _ultimo_intento_voz.get(guild.id, 0) < 55:
@@ -725,22 +755,73 @@ async def join_cmd(ctx):
     ya_esta = bot_member_antes.voice and bot_member_antes.voice.channel and bot_member_antes.voice.channel.id == ch.id and vc_antes and vc_antes.is_connected()
     if ya_esta:
         if not vc_antes.is_playing():
-            start_247(vc_antes)
-        await ctx.send(embed=embed_success("24/7", f"Ya estoy en `{ch.name}` 24/7, no le des doble porque Discord me saca con 4006"))
+            play_next(ctx)
+        await ctx.send(embed=embed_success("24/7", f"Ya estoy en `{ch.name}` 24/7"))
         return
-    msg = await ctx.send(embed=embed_base("24/7", f"Conectando a `{ch.name}` en modo 24/7..."))
+    msg = await ctx.send(embed=embed_base("24/7", f"Conectando a `{ch.name}` en modo 24/7 saturado..."))
     try:
         voice_stay[ctx.guild.id] = ch.id
         save_data()
         _intentos_voz[ctx.guild.id] = 0
         _ultimo_intento_voz[ctx.guild.id] = time.time()
         vc = await conectar_247(ctx.guild, ch)
-        await msg.edit(embed=embed_success("24/7", f"Conectado a `{ch.name}` - Modo 24/7 activado - NO le des ,join otra vez"))
+        await msg.edit(embed=embed_success("24/7", f"Conectado a `{ch.name}` - Modo 24/7 saturado activado"))
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         try:
             await msg.edit(embed=embed_error(f"Error al entrar: `{e}`"))
         except:
             await ctx.send(embed=embed_error(f"Error al entrar: `{e}`"))
+
+@bot.command(name="play")
+async def play_cmd(ctx, *, query=None):
+    if not await check_owner(ctx):
+        return
+    if not query:
+        await ctx.send(embed=usage_embed(",play (nombre o link)"))
+        return
+    if not ctx.author.voice or not ctx.author.voice.channel:
+        await ctx.send(embed=embed_error("Tienes que estar en voz para poner musica"))
+        return
+    vc = ctx.guild.voice_client
+    if not vc or not vc.is_connected():
+        voice_stay[ctx.guild.id] = ctx.author.voice.channel.id
+        save_data()
+        vc = await conectar_247(ctx.guild, ctx.author.voice.channel)
+    music_queue[ctx.guild.id].append(query)
+    last_song[ctx.guild.id] = query
+    save_data()
+    if not vc.is_playing():
+        play_next(ctx)
+        await ctx.send(embed=embed_success("Musica Saturada", f"Sonando saturada: `{query}`"))
+    else:
+        await ctx.send(embed=embed_success("Musica Saturada", f"En cola: `{query}`"))
+
+@bot.command(name="stop")
+async def stop_cmd(ctx):
+    if not await check_owner(ctx):
+        return
+    vc = ctx.guild.voice_client
+    if vc and vc.is_playing():
+        vc.stop()
+        music_queue[ctx.guild.id].clear()
+        await ctx.send(embed=embed_success("Musica", "Parada - Pero sigo en 24/7"))
+        await asyncio.sleep(0.5)
+        play_next(ctx)
+    else:
+        await ctx.send(embed=embed_error("No esta sonando nada"))
+
+@bot.command(name="skip")
+async def skip_cmd(ctx):
+    if not await check_owner(ctx):
+        return
+    vc = ctx.guild.voice_client
+    if vc and vc.is_playing():
+        vc.stop()
+        await ctx.send(embed=embed_success("Musica", "Saltada"))
+    else:
+        await ctx.send(embed=embed_error("No esta sonando nada"))
 
 @bot.command(name="leave")
 async def leave_cmd(ctx):
@@ -750,6 +831,7 @@ async def leave_cmd(ctx):
     save_data()
     _intentos_voz[ctx.guild.id] = 0
     _conectando_voz.discard(ctx.guild.id)
+    music_queue[ctx.guild.id].clear()
     vc = ctx.guild.voice_client
     bot_member = ctx.guild.get_member(bot.user.id)
     realmente_en_voz = bot_member.voice and bot_member.voice.channel
@@ -804,8 +886,11 @@ HELP_DESC = """**ROLES**
 `,bnv`
 `,dpd`
 
-**VOICE - OWNERS**
-`,join` - 24/7
+**MUSICA SATURADA 24/7 - OWNERS**
+`,join` - Entra y se queda 24/7
+`,play (cancion o link)` - Suena saturada
+`,skip` - Salta
+`,stop` - Para
 `,leave` - Apaga 24/7
 
 **HELP**
