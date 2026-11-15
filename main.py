@@ -1,6 +1,7 @@
 # ============================================================
 #  BOT COMPLETO - 8 SISTEMAS
-#  VOICE SIMPLIFICADO: solo ,join / ,leave, SIN reconectar
+#  VOICE ARREGLADO: ya no dice "ya estoy" cuando en realidad no esta
+#  Solo ,join / ,leave, SIN reconectar
 # ============================================================
 
 import discord
@@ -668,30 +669,49 @@ async def on_member_remove(member):
                 pass
 
 # ============================================================
-#  7. VOICE - SUPER SIMPLE, SIN RECONECTAR, SIN BUCLES
-#  Solo ,join si TU estas en voz. Solo ,leave para salir.
-#  Si lo sacan manual, NO regresa. Si se reinicia, NO regresa.
-#  NO HAY on_voice_state_update, NO HAY on_ready de voz, NO HAY VoiceSelect
+#  7. VOICE - ARREGLADO
+#  FIX: Antes decia "Ya estoy" aunque no estaba de verdad
+#  Ahora checa is_connected() + el estado real del bot en Discord
+#  Solo ,join / ,leave, SIN reconectar, SIN on_voice_state_update
 # ============================================================
 
 @bot.command(name="join")
 async def join_cmd(ctx):
     if not await check_owner(ctx):
         return
-    # SOLO SI TU ESTAS EN UN CANAL
     if not ctx.author.voice or not ctx.author.voice.channel:
         await ctx.send(embed=embed_error("Tienes que estar en un canal de voz para usar `,join`"))
         return
     ch = ctx.author.voice.channel
     try:
+        bot_member = ctx.guild.get_member(bot.user.id)
+        realmente_en_voz = bot_member.voice and bot_member.voice.channel
+
         vc = ctx.guild.voice_client
-        if vc:
-            if vc.channel.id == ch.id:
-                await ctx.send(embed=embed_success("Voice", f"Ya estoy en `{ch.name}`"))
-                return
+        # Si el voice_client esta colgado / desconectado, matarlo
+        if vc and not vc.is_connected():
+            try:
+                await vc.disconnect(force=True)
+            except:
+                pass
+            vc = None
+            await asyncio.sleep(1)
+
+        if realmente_en_voz and realmente_en_voz.id == ch.id and vc and vc.is_connected():
+            await ctx.send(embed=embed_success("Voice", f"Ya estoy en `{ch.name}`"))
+            return
+
+        if vc and vc.is_connected():
             await vc.move_to(ch)
         else:
+            if vc:
+                try:
+                    await vc.disconnect(force=True)
+                except:
+                    pass
+                await asyncio.sleep(1)
             await ch.connect()
+
         await ctx.send(embed=embed_success("Voice", f"Conectado a `{ch.name}`"))
     except Exception as e:
         await ctx.send(embed=embed_error(f"Error al entrar: `{e}`"))
@@ -701,20 +721,23 @@ async def leave_cmd(ctx):
     if not await check_owner(ctx):
         return
     vc = ctx.guild.voice_client
-    if not vc:
+    bot_member = ctx.guild.get_member(bot.user.id)
+    realmente_en_voz = bot_member.voice and bot_member.voice.channel
+
+    if not vc and not realmente_en_voz:
         await ctx.send(embed=embed_error("Ni siquiera estoy en voz"))
         return
     try:
-        # Sacarlo por los 2 lados para que si se salga si o si
-        await vc.disconnect(force=True)
+        if vc:
+            await vc.disconnect(force=True)
     except:
         pass
     try:
-        bot_member = ctx.guild.get_member(bot.user.id)
-        if bot_member and bot_member.voice:
+        if realmente_en_voz:
             await bot_member.move_to(None)
     except:
         pass
+    await asyncio.sleep(1)
     await ctx.send(embed=embed_success("Voice", "Desconectado"))
 
 # ============================================================
