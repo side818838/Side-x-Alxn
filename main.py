@@ -1,27 +1,16 @@
-# ============================================================
-#  BOT COMPLETO - 8 SISTEMAS
-#  VOICE ARREGLADO: ya no dice "ya estoy" cuando en realidad no esta
-#  Solo ,join / ,leave, SIN reconectar
-# ============================================================
-
 import discord
 from discord.ext import commands, tasks
 import asyncio
 import json
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
-
-# ============================================================
-#  CONFIG
-# ============================================================
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN") or os.getenv("TOKEN")
 PREFIX = ","
 
-OWNER_IDS = [
-    1310357536087740450,
-]
+OWNER_IDS = [1310357536087740450]
 
 ROLE_1 = 111111111111111111
 ROLE_2 = 222222222222222222
@@ -43,10 +32,6 @@ ANTINUKE_BAN_REASON = "Anti-Nuke: Accion masiva detectada"
 DATA_FILE = "data.json"
 LOG_FILE = "logs.txt"
 
-# ============================================================
-#  INTENTS Y BOT
-# ============================================================
-
 intents = discord.Intents.all()
 intents.members = True
 intents.message_content = True
@@ -54,10 +39,6 @@ intents.voice_states = True
 intents.guilds = True
 
 bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None, case_insensitive=True)
-
-# ============================================================
-#  DATA
-# ============================================================
 
 def load_data():
     if os.path.exists(DATA_FILE):
@@ -93,10 +74,8 @@ voice_lock = {int(k): v for k, v in _saved.get("voice_lock", {}).items()}
 
 action_log = defaultdict(list)
 antinuke_bans = defaultdict(int)
-
-# ============================================================
-#  HELPERS
-# ============================================================
+_ultimo_intento_voz = {}
+_intentos_voz = defaultdict(int)
 
 def embed_base(title, desc=""):
     e = discord.Embed(title=title, description=desc, color=0x111111)
@@ -163,10 +142,6 @@ def format_time(seconds):
     if seconds < 86400:
         return f"{seconds // 3600}h"
     return f"{seconds // 86400}d"
-
-# ============================================================
-#  ANTI-NUKE
-# ============================================================
 
 async def antinuke_check(guild, user, action_name):
     if not ANTINUKE_ENABLED:
@@ -243,10 +218,6 @@ async def on_guild_role_update(before, after):
     user = await get_audit_user(after.guild, discord.AuditLogAction.role_update)
     if user:
         await antinuke_check(after.guild, user, "role_update")
-
-# ============================================================
-#  1. ROLES
-# ============================================================
 
 def find_role(guild, query):
     if not query:
@@ -354,10 +325,6 @@ async def roles_cmd(ctx, member: discord.Member = None):
     desc = "\n".join(roles) if roles else "Sin roles"
     await ctx.send(embed=embed_base(f"Roles de {target.display_name}", desc))
 
-# ============================================================
-#  2. WHITELIST
-# ============================================================
-
 @bot.command(name="wl")
 async def wl_cmd(ctx, action=None, member: discord.Member = None, user_arg=None):
     if not await check_owner(ctx):
@@ -421,10 +388,6 @@ async def wl_cmd(ctx, action=None, member: discord.Member = None, user_arg=None)
             log_to_file(f"WL REMOVE: {ctx.author} quito {target_id}")
     except Exception as e:
         await ctx.send(embed=embed_error(f"Error: `{e}`"))
-
-# ============================================================
-#  4. MODERACION
-# ============================================================
 
 @bot.command(name="massban")
 async def massban_cmd(ctx, *members: discord.Member):
@@ -598,10 +561,6 @@ async def clear_cmd(ctx, cantidad: int = None):
     except Exception as e:
         await ctx.send(embed=embed_error(f"Error: `{e}`"))
 
-# ============================================================
-#  5. BIENVENIDAS / DESPEDIDAS
-# ============================================================
-
 class ChannelSelect(discord.ui.Select):
     def __init__(self, tipo):
         self.tipo = tipo
@@ -668,12 +627,41 @@ async def on_member_remove(member):
             except:
                 pass
 
-# ============================================================
-#  7. VOICE - ARREGLADO
-#  FIX: Antes decia "Ya estoy" aunque no estaba de verdad
-#  Ahora checa is_connected() + el estado real del bot en Discord
-#  Solo ,join / ,leave, SIN reconectar, SIN on_voice_state_update
-# ============================================================
+@tasks.loop(seconds=60)
+async def mantener_voz():
+    if not voice_stay:
+        return
+    for guild in bot.guilds:
+        ch_id = voice_stay.get(guild.id)
+        if not ch_id:
+            continue
+        try:
+            vc = guild.voice_client
+            bot_member = guild.get_member(bot.user.id)
+            realmente_en_voz = bot_member.voice and bot_member.voice.channel if bot_member else None
+            if vc and vc.is_connected() and realmente_en_voz and realmente_en_voz.id == ch_id:
+                _intentos_voz[guild.id] = 0
+                continue
+            ahora = time.time()
+            if ahora - _ultimo_intento_voz.get(guild.id, 0) < 50:
+                continue
+            _ultimo_intento_voz[guild.id] = ahora
+            _intentos_voz[guild.id] += 1
+            ch = guild.get_channel(ch_id)
+            if not ch:
+                voice_stay.pop(guild.id, None)
+                save_data()
+                continue
+            if vc and not vc.is_connected():
+                try:
+                    await vc.disconnect(force=True)
+                except:
+                    pass
+                await asyncio.sleep(1)
+            await ch.connect(self_deaf=True, self_mute=True, reconnect=True)
+            _intentos_voz[guild.id] = 0
+        except Exception as e:
+            print(f"[VOZ] No pude reconectar en {guild.name}: {e}")
 
 @bot.command(name="join")
 async def join_cmd(ctx):
@@ -683,13 +671,12 @@ async def join_cmd(ctx):
         await ctx.send(embed=embed_error("Tienes que estar en un canal de voz para usar `,join`"))
         return
     ch = ctx.author.voice.channel
-
-    # MENSAJE PRIMERO, PARA QUE NO SE SIENTA QUE TARDA
     msg = await ctx.send(embed=embed_base("Voice", f"Conectando a `{ch.name}`..."))
-
     try:
+        voice_stay[ctx.guild.id] = ch.id
+        save_data()
+        _intentos_voz[ctx.guild.id] = 0
         vc = ctx.guild.voice_client
-        # Si esta colgado, matarlo
         if vc and not vc.is_connected():
             try:
                 await vc.disconnect(force=True)
@@ -697,21 +684,20 @@ async def join_cmd(ctx):
                 pass
             vc = None
             await asyncio.sleep(1)
-
         bot_member = ctx.guild.get_member(bot.user.id)
         realmente_en_voz = bot_member.voice and bot_member.voice.channel
-
         if realmente_en_voz and realmente_en_voz.id == ch.id and vc and vc.is_connected():
-            await msg.edit(embed=embed_success("Voice", f"Ya estoy en `{ch.name}`"))
+            await msg.edit(embed=embed_success("Voice", f"Ya estoy en `{ch.name}` y ahí me quedo 24/7"))
             return
-
         if vc and vc.is_connected():
             await vc.move_to(ch)
+            try:
+                await ctx.guild.change_voice_state(channel=ch, self_mute=True, self_deaf=True)
+            except:
+                pass
         else:
-            # ESTE ES EL FIX PARA QUE NO SE SALGA: self_deaf=True lo deja fijo
-            await ch.connect(self_deaf=True, self_mute=False)
-
-        await msg.edit(embed=embed_success("Voice", f"Conectado a `{ch.name}`"))
+            await ch.connect(self_deaf=True, self_mute=True, reconnect=True)
+        await msg.edit(embed=embed_success("Voice", f"Conectado a `{ch.name}` - Me quedo 24/7 solo activando"))
     except Exception as e:
         try:
             await msg.edit(embed=embed_error(f"Error al entrar: `{e}`"))
@@ -722,10 +708,12 @@ async def join_cmd(ctx):
 async def leave_cmd(ctx):
     if not await check_owner(ctx):
         return
+    voice_stay.pop(ctx.guild.id, None)
+    save_data()
+    _intentos_voz[ctx.guild.id] = 0
     vc = ctx.guild.voice_client
     bot_member = ctx.guild.get_member(bot.user.id)
     realmente_en_voz = bot_member.voice and bot_member.voice.channel
-
     if not vc and not realmente_en_voz:
         await ctx.send(embed=embed_error("Ni siquiera estoy en voz"))
         return
@@ -741,10 +729,6 @@ async def leave_cmd(ctx):
         pass
     await asyncio.sleep(1)
     await ctx.send(embed=embed_success("Voice", "Desconectado"))
-
-# ============================================================
-#  8. HELP
-# ============================================================
 
 HELP_DESC = """**ROLES**
 `,r add (id) (mencion) name role`
@@ -780,8 +764,8 @@ HELP_DESC = """**ROLES**
 `,dpd`
 
 **VOICE - OWNERS**
-`,join` - Solo si tu estas en voz
-`,leave` - Solo sale, no reconecta
+`,join`
+`,leave`
 
 **HELP**
 `,h` / `,help` / `,ayuda`"""
@@ -793,10 +777,6 @@ async def help_cmd(ctx):
     e = embed_base("HELP - TODOS LOS COMANDOS", HELP_DESC)
     e.set_footer(text="Solo Rol 1 al 7 puede ver este panel")
     await ctx.send(embed=e)
-
-# ============================================================
-#  ERRORES GENERALES
-# ============================================================
 
 @bot.event
 async def on_command_error(ctx, error):
@@ -816,17 +796,13 @@ async def on_command_error(ctx, error):
 
 @bot.event
 async def on_ready():
-    print(f"========================================")
     print(f"Bot listo: {bot.user}")
     print(f"Servers: {len(bot.guilds)}")
     print(f"Whitelist cargada: {len(whitelist)}")
     print(f"Anti-Nuke: {'PRENDIDO' if ANTINUKE_ENABLED else 'APAGADO'}")
-    print(f"Voice: SOLO ,join / ,leave, SIN reconectar")
-    print(f"========================================")
-
-# ============================================================
-#  RUN
-# ============================================================
+    print(f"Voice: {voice_stay}")
+    if not mantener_voz.is_running():
+        mantener_voz.start()
 
 if __name__ == "__main__":
     bot.run(TOKEN)
