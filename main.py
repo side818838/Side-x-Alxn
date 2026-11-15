@@ -1,6 +1,6 @@
 # ============================================================
-#  BOT COMPLETO - 8 SISTEMAS - ARREGLADO
-#  FIX: ,leave ya si saca a fuerza + auto-reconecte si lo sacan manual
+#  BOT COMPLETO - 8 SISTEMAS
+#  VOICE SIMPLIFICADO: solo ,join / ,leave, SIN reconectar
 # ============================================================
 
 import discord
@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 
 # ============================================================
-#  CONFIG - CAMBIA TODO ESTO AQUI
+#  CONFIG
 # ============================================================
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN") or os.getenv("TOKEN")
@@ -92,8 +92,6 @@ voice_lock = {int(k): v for k, v in _saved.get("voice_lock", {}).items()}
 
 action_log = defaultdict(list)
 antinuke_bans = defaultdict(int)
-# FIX LEAVE: set para que no reconecte cuando TU le das ,leave
-leaving = set()
 
 # ============================================================
 #  HELPERS
@@ -166,7 +164,7 @@ def format_time(seconds):
     return f"{seconds // 86400}d"
 
 # ============================================================
-#  ANTI-NUKE - FIX: get_audit_user ahora usa timezone.utc bien
+#  ANTI-NUKE
 # ============================================================
 
 async def antinuke_check(guild, user, action_name):
@@ -196,7 +194,6 @@ async def antinuke_check(guild, user, action_name):
 async def get_audit_user(guild, action):
     try:
         async for entry in guild.audit_logs(limit=1, action=action):
-            # FIX: antes usabas datetime.now(entry.created_at.tzinfo) que a veces fallaba
             diff = (datetime.now(timezone.utc) - entry.created_at).total_seconds()
             if diff < 5:
                 return entry.user
@@ -671,88 +668,31 @@ async def on_member_remove(member):
                 pass
 
 # ============================================================
-#  7. VOICE 24/7 - ARREGLADO
-#  - ,leave ahora si saca con move_to(None) + disconnect(force=True)
-#  - on_voice_state_update: si lo sacan manual, regresa solo. Si fue ,leave, NO regresa
-#  - on_ready: si se reinicia, regresa solo si voice_lock = True
+#  7. VOICE - SUPER SIMPLE, SIN RECONECTAR, SIN BUCLES
+#  Solo ,join si TU estas en voz. Solo ,leave para salir.
+#  Si lo sacan manual, NO regresa. Si se reinicia, NO regresa.
+#  NO HAY on_voice_state_update, NO HAY on_ready de voz, NO HAY VoiceSelect
 # ============================================================
-
-@bot.event
-async def on_voice_state_update(member, before, after):
-    # Solo nos importa el bot
-    if member.id != bot.user.id:
-        return
-    # Lo sacaron de voz
-    if after.channel is None and before.channel is not None:
-        gid = member.guild.id
-        await asyncio.sleep(5)
-        # FIX: Si le diste ,leave, NO regresa
-        if gid in leaving:
-            return
-        if not voice_lock.get(gid):
-            return
-        cid = voice_stay.get(gid)
-        ch = member.guild.get_channel(cid) if cid else None
-        if ch:
-            try:
-                await ch.connect()
-                print(f"[VOICE] Me sacaron manual, regrese a {ch.name}")
-            except Exception as e:
-                print(f"[VOICE] No pude regresar: {e}")
-
-class VoiceSelect(discord.ui.Select):
-    def __init__(self, guild):
-        super().__init__(placeholder="Elige un canal de voz", min_values=1, max_values=1)
-        for ch in guild.voice_channels:
-            members_count = len(ch.members)
-            self.add_option(label=ch.name, value=str(ch.id), description=f"{members_count} conectados")
-    async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id not in OWNER_IDS and interaction.guild.owner_id != interaction.user.id:
-            await interaction.response.send_message(embed=no_perm_embed(), ephemeral=True)
-            return
-        cid = int(self.values[0])
-        ch = interaction.guild.get_channel(cid)
-        try:
-            vc = interaction.guild.voice_client
-            if vc:
-                await vc.move_to(ch)
-            else:
-                await ch.connect()
-            voice_stay[interaction.guild_id] = cid
-            voice_lock[interaction.guild_id] = True
-            save_data()
-            leaving.discard(interaction.guild_id)
-            await interaction.response.send_message(embed=embed_success("Voice", f"Conectado a `{ch.name}` 24/7"), ephemeral=True)
-        except Exception as e:
-            await interaction.response.send_message(embed=embed_error(f"No pude entrar: `{e}`"), ephemeral=True)
-
-class VoiceView(discord.ui.View):
-    def __init__(self, guild):
-        super().__init__(timeout=60)
-        self.add_item(VoiceSelect(guild))
 
 @bot.command(name="join")
 async def join_cmd(ctx):
     if not await check_owner(ctx):
         return
+    # SOLO SI TU ESTAS EN UN CANAL
+    if not ctx.author.voice or not ctx.author.voice.channel:
+        await ctx.send(embed=embed_error("Tienes que estar en un canal de voz para usar `,join`"))
+        return
+    ch = ctx.author.voice.channel
     try:
-        if ctx.author.voice and ctx.author.voice.channel:
-            ch = ctx.author.voice.channel
-            vc = ctx.guild.voice_client
-            if vc:
-                await vc.move_to(ch)
-            else:
-                await ch.connect()
-            voice_stay[ctx.guild.id] = ch.id
-            voice_lock[ctx.guild.id] = True
-            save_data()
-            leaving.discard(ctx.guild.id)
-            await ctx.send(embed=embed_success("Voice", f"Conectado a `{ch.name}` 24/7"))
-        else:
-            if not ctx.guild.voice_channels:
-                await ctx.send(embed=embed_error("Este server no tiene canales de voz"))
+        vc = ctx.guild.voice_client
+        if vc:
+            if vc.channel.id == ch.id:
+                await ctx.send(embed=embed_success("Voice", f"Ya estoy en `{ch.name}`"))
                 return
-            await ctx.send(embed=embed_base("Voice", "No estas en un canal, elige uno abajo:"), view=VoiceView(ctx.guild))
+            await vc.move_to(ch)
+        else:
+            await ch.connect()
+        await ctx.send(embed=embed_success("Voice", f"Conectado a `{ch.name}`"))
     except Exception as e:
         await ctx.send(embed=embed_error(f"Error al entrar: `{e}`"))
 
@@ -760,38 +700,22 @@ async def join_cmd(ctx):
 async def leave_cmd(ctx):
     if not await check_owner(ctx):
         return
-    # FIX 1: Apagar candado PRIMERO y marcar que estamos en ,leave
-    voice_lock[ctx.guild.id] = False
-    voice_stay.pop(ctx.guild.id, None)
-    save_data()
-    leaving.add(ctx.guild.id)
-
-    # FIX 2: Sacarlo por voice_client con force
     vc = ctx.guild.voice_client
-    if vc:
-        try:
-            await vc.disconnect(force=True)
-        except:
-            pass
-
-    # FIX 3: ESTE ES EL QUE FALTABA - Sacarlo con move_to(None) a fuerza
+    if not vc:
+        await ctx.send(embed=embed_error("Ni siquiera estoy en voz"))
+        return
+    try:
+        # Sacarlo por los 2 lados para que si se salga si o si
+        await vc.disconnect(force=True)
+    except:
+        pass
     try:
         bot_member = ctx.guild.get_member(bot.user.id)
         if bot_member and bot_member.voice:
             await bot_member.move_to(None)
-    except Exception as e:
-        print(f"No pude moverlo: {e}")
-
-    # FIX 4: Limpiar cualquier voice_client bugueado
-    for vc2 in list(bot.voice_clients):
-        try:
-            await vc2.disconnect(force=True)
-        except:
-            pass
-
-    await asyncio.sleep(2)
-    leaving.discard(ctx.guild.id)
-    await ctx.send(embed=embed_success("Voice", "Desconectado. Ya no voy a reconectar hasta que pongas `,join`"))
+    except:
+        pass
+    await ctx.send(embed=embed_success("Voice", "Desconectado"))
 
 # ============================================================
 #  8. HELP
@@ -830,9 +754,9 @@ HELP_DESC = """**ROLES**
 `,bnv`
 `,dpd`
 
-**VOICE 24/7 - OWNERS**
-`,join`
-`,leave`
+**VOICE - OWNERS**
+`,join` - Solo si tu estas en voz
+`,leave` - Solo sale, no reconecta
 
 **HELP**
 `,h` / `,help` / `,ayuda`"""
@@ -871,24 +795,9 @@ async def on_ready():
     print(f"Bot listo: {bot.user}")
     print(f"Servers: {len(bot.guilds)}")
     print(f"Whitelist cargada: {len(whitelist)}")
-    print(f"Voice lock: {voice_lock}")
     print(f"Anti-Nuke: {'PRENDIDO' if ANTINUKE_ENABLED else 'APAGADO'}")
+    print(f"Voice: SOLO ,join / ,leave, SIN reconectar")
     print(f"========================================")
-    # FIX: Si se reinicio y tenia que estar en voz, regresa solo
-    for gid, locked in list(voice_lock.items()):
-        if not locked:
-            continue
-        guild = bot.get_guild(gid)
-        if not guild:
-            continue
-        cid = voice_stay.get(gid)
-        ch = guild.get_channel(cid) if cid else None
-        if ch and not guild.voice_client:
-            try:
-                await ch.connect()
-                print(f"[VOICE] Regrese a {ch.name} en {guild.name} despues de reinicio")
-            except Exception as e:
-                print(f"[VOICE] No pude regresar en {guild.name}: {e}")
 
 # ============================================================
 #  RUN
