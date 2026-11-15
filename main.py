@@ -627,7 +627,31 @@ async def on_member_remove(member):
             except:
                 pass
 
-@tasks.loop(seconds=60)
+class SilentSource(discord.AudioSource):
+    def read(self):
+        return b"\x00" * 3840
+    def is_opus(self):
+        return False
+    def cleanup(self):
+        pass
+
+def start_247(vc):
+    if vc and vc.is_connected() and not vc.is_playing():
+        try:
+            vc.play(SilentSource(), after=lambda e: start_247_after(vc))
+        except Exception as e:
+            print(f"[24/7] Error audio silencio: {e}")
+
+def start_247_after(vc):
+    if vc and vc.is_connected() and vc.guild.id in voice_stay:
+        asyncio.run_coroutine_threadsafe(reconnect_silencio(vc), bot.loop)
+
+async def reconnect_silencio(vc):
+    await asyncio.sleep(0.2)
+    if vc and vc.is_connected() and vc.guild.id in voice_stay and not vc.is_playing():
+        start_247(vc)
+
+@tasks.loop(seconds=30)
 async def mantener_voz():
     if not voice_stay:
         return
@@ -641,9 +665,11 @@ async def mantener_voz():
             realmente_en_voz = bot_member.voice and bot_member.voice.channel if bot_member else None
             if vc and vc.is_connected() and realmente_en_voz and realmente_en_voz.id == ch_id:
                 _intentos_voz[guild.id] = 0
+                if not vc.is_playing():
+                    start_247(vc)
                 continue
             ahora = time.time()
-            if ahora - _ultimo_intento_voz.get(guild.id, 0) < 50:
+            if ahora - _ultimo_intento_voz.get(guild.id, 0) < 25:
                 continue
             _ultimo_intento_voz[guild.id] = ahora
             _intentos_voz[guild.id] += 1
@@ -658,10 +684,12 @@ async def mantener_voz():
                 except:
                     pass
                 await asyncio.sleep(1)
-            await ch.connect(self_deaf=True, self_mute=True, reconnect=True)
+            vc = await ch.connect(self_deaf=False, self_mute=False, reconnect=True)
+            await asyncio.sleep(1)
+            start_247(vc)
             _intentos_voz[guild.id] = 0
         except Exception as e:
-            print(f"[VOZ] No pude reconectar en {guild.name}: {e}")
+            print(f"[24/7] No pude reconectar en {guild.name}: {e}")
 
 @bot.command(name="join")
 async def join_cmd(ctx):
@@ -671,7 +699,7 @@ async def join_cmd(ctx):
         await ctx.send(embed=embed_error("Tienes que estar en un canal de voz para usar `,join`"))
         return
     ch = ctx.author.voice.channel
-    msg = await ctx.send(embed=embed_base("Voice", f"Conectando a `{ch.name}`..."))
+    msg = await ctx.send(embed=embed_base("24/7", f"Conectando a `{ch.name}` en modo 24/7..."))
     try:
         voice_stay[ctx.guild.id] = ch.id
         save_data()
@@ -687,17 +715,20 @@ async def join_cmd(ctx):
         bot_member = ctx.guild.get_member(bot.user.id)
         realmente_en_voz = bot_member.voice and bot_member.voice.channel
         if realmente_en_voz and realmente_en_voz.id == ch.id and vc and vc.is_connected():
-            await msg.edit(embed=embed_success("Voice", f"Ya estoy en `{ch.name}` y ahí me quedo 24/7"))
+            start_247(vc)
+            await msg.edit(embed=embed_success("24/7", f"Ya estoy en `{ch.name}` 24/7"))
             return
         if vc and vc.is_connected():
             await vc.move_to(ch)
             try:
-                await ctx.guild.change_voice_state(channel=ch, self_mute=True, self_deaf=True)
+                await ctx.guild.change_voice_state(channel=ch, self_mute=False, self_deaf=False)
             except:
                 pass
         else:
-            await ch.connect(self_deaf=True, self_mute=True, reconnect=True)
-        await msg.edit(embed=embed_success("Voice", f"Conectado a `{ch.name}` - Me quedo 24/7 solo activando"))
+            vc = await ch.connect(self_deaf=False, self_mute=False, reconnect=True)
+        await asyncio.sleep(1)
+        start_247(vc)
+        await msg.edit(embed=embed_success("24/7", f"Conectado a `{ch.name}` - Modo 24/7 activado"))
     except Exception as e:
         try:
             await msg.edit(embed=embed_error(f"Error al entrar: `{e}`"))
@@ -719,6 +750,8 @@ async def leave_cmd(ctx):
         return
     try:
         if vc:
+            if vc.is_playing():
+                vc.stop()
             await vc.disconnect(force=True)
     except:
         pass
@@ -728,7 +761,7 @@ async def leave_cmd(ctx):
     except:
         pass
     await asyncio.sleep(1)
-    await ctx.send(embed=embed_success("Voice", "Desconectado"))
+    await ctx.send(embed=embed_success("24/7", "Desconectado - 24/7 apagado"))
 
 HELP_DESC = """**ROLES**
 `,r add (id) (mencion) name role`
@@ -764,8 +797,8 @@ HELP_DESC = """**ROLES**
 `,dpd`
 
 **VOICE - OWNERS**
-`,join`
-`,leave`
+`,join` - 24/7
+`,leave` - Apaga 24/7
 
 **HELP**
 `,h` / `,help` / `,ayuda`"""
@@ -800,7 +833,7 @@ async def on_ready():
     print(f"Servers: {len(bot.guilds)}")
     print(f"Whitelist cargada: {len(whitelist)}")
     print(f"Anti-Nuke: {'PRENDIDO' if ANTINUKE_ENABLED else 'APAGADO'}")
-    print(f"Voice: {voice_stay}")
+    print(f"Voice 24/7: {voice_stay}")
     if not mantener_voz.is_running():
         mantener_voz.start()
 
